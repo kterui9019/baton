@@ -12,6 +12,7 @@ const ticket = (over: Partial<Ticket> = {}): Ticket => ({
   condition: null,
   lastEditedTime: "2026-07-01T00:00:00.000Z",
   createdTime: "2026-07-01T00:00:00.000Z",
+  authorId: "",
   ...over,
 });
 

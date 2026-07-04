@@ -8,6 +8,8 @@ export interface Ticket {
   condition: string | null;
   lastEditedTime: string;
   createdTime: string;
+  /** チケット作成者 ID（Notion user id / GitHub login）。未取得時は ""）。 */
+  authorId: string;
 }
 
 /** チケットへのコメント 1 件（rework 時のフィードバック取り込み用）。 */

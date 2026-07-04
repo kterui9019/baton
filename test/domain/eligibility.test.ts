@@ -59,6 +59,7 @@ function ticket(over: Partial<Ticket> = {}): Ticket {
     condition: "Local",
     lastEditedTime: "2026-07-02T10:00:00.000Z",
     createdTime: "2026-07-01T00:00:00.000Z",
+    authorId: "user-me",
     ...over,
   };
 }
@@ -88,6 +89,48 @@ test("未処理のチケットは eligible / run=fresh", () => {
   const d = decide(ticket(), undefined);
   assertEligible(d);
   expect(d.run.kind).toBe("fresh");
+});
+
+test("onlyOwnTickets: 作成者一致なら eligible", () => {
+  const d = decideEligibility({
+    ticket: ticket({ authorId: "user-me" }),
+    cfg: { ...cfg, onlyOwnTickets: true, operatorUserId: "user-me" },
+    isActive: false,
+    ps: undefined,
+  });
+  assertEligible(d);
+});
+
+test("onlyOwnTickets: 作成者不一致はスキップ", () => {
+  const d = decideEligibility({
+    ticket: ticket({ authorId: "other-user" }),
+    cfg: { ...cfg, onlyOwnTickets: true, operatorUserId: "user-me" },
+    isActive: false,
+    ps: undefined,
+  });
+  assertIneligible(d);
+  expect(d.reason).toContain("作成者不一致");
+});
+
+test("onlyOwnTickets: 操作者不明はスキップ", () => {
+  const d = decideEligibility({
+    ticket: ticket({ authorId: "user-me" }),
+    cfg: { ...cfg, onlyOwnTickets: true, operatorUserId: null },
+    isActive: false,
+    ps: undefined,
+  });
+  assertIneligible(d);
+  expect(d.reason).toContain("操作者不明");
+});
+
+test("onlyOwnTickets: false なら他人のチケットも eligible", () => {
+  const d = decideEligibility({
+    ticket: ticket({ authorId: "other-user" }),
+    cfg: { ...cfg, onlyOwnTickets: false, operatorUserId: "user-me" },
+    isActive: false,
+    ps: undefined,
+  });
+  assertEligible(d);
 });
 
 test("done: 記録時刻より編集が進んでいれば human_rework で eligible", () => {

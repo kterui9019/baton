@@ -28,6 +28,7 @@ const pageFixture = {
   url: "https://app.notion.com/p/xxx-38b76d6c08eb802f9ddac7f4ec790b5e",
   created_time: "2026-06-26T14:31:00.000Z",
   last_edited_time: "2026-06-29T02:23:00.000Z",
+  created_by: { object: "user", id: "notion-user-1" },
   is_archived: false,
   in_trash: false,
   properties: {
@@ -60,6 +61,7 @@ test("parseTicket: ページ JSON → Ticket", () => {
   expect(t.lastEditedTime).toBe("2026-06-29T02:23:00.000Z");
   expect(t.createdTime).toBe("2026-06-26T14:31:00.000Z");
   expect(t.url).toContain("38b76d6c");
+  expect(t.authorId).toBe("notion-user-1");
 });
 
 test("parseTicket: 未設定プロパティは null / 空", () => {

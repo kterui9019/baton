@@ -82,6 +82,7 @@ export function parseIssueListItem(
     condition: null,
     lastEditedTime: j.updatedAt ?? "",
     createdTime: j.createdAt ?? "",
+    authorId: j.author?.login ?? "",
   };
 }
 
@@ -92,6 +93,7 @@ const GhIssueViewSchema = z.object({
   labels: z.array(GhLabelSchema).optional(),
   updatedAt: z.string().optional(),
   createdAt: z.string().optional(),
+  author: GhAuthorSchema,
   state: z.string().optional(),
   closed: z.boolean().optional(),
   body: z.string().optional(),
@@ -218,7 +220,7 @@ export function createGitHubKanbanAdapter(
     const slug = resolveSlug(pageId);
     const view = await viewIssue(
       slug,
-      "number,title,url,labels,updatedAt,createdAt,state,closed",
+      "number,title,url,labels,updatedAt,createdAt,author,state,closed",
     );
     const closed = view.closed === true || view.state === "CLOSED";
     return {
@@ -231,6 +233,7 @@ export function createGitHubKanbanAdapter(
         condition: null,
         lastEditedTime: view.updatedAt ?? "",
         createdTime: view.createdAt ?? "",
+        authorId: view.author?.login ?? "",
       },
       // GitHub Issues にはアーカイブ状態はないため、close を「進行不可」として扱う。
       isArchived: closed,
