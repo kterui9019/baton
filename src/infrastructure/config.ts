@@ -113,6 +113,11 @@ export interface RepoConfigEntry {
 export interface Config {
   pollIntervalMs: number;
   maxConcurrent: number;
+  /**
+   * true（デフォルト）のとき、カンバン上の自分が作成したチケットにだけ反応する。
+   * false にすると他人が作成したチケットも dispatch 対象になる。
+   */
+  onlyOwnTickets: boolean;
   /** 作業ブランチ名テンプレートのグローバルデフォルト。repoConfig[repo].branchTemplate で上書き可能。 */
   branchTemplate: string;
   /** worktree セットアップコマンドのタイムアウト (ms)。 */
@@ -152,6 +157,7 @@ export interface Config {
 export const DEFAULT_CONFIG: Config = {
   pollIntervalMs: 30_000,
   maxConcurrent: 2,
+  onlyOwnTickets: true,
   branchTemplate: "feature/notion-{id}/{slug}",
   setupTimeoutMs: 600_000,
   repoConfig: {},
@@ -276,6 +282,7 @@ const RepoConfigEntryInputSchema = z.object({
 const ConfigInputSchema = z.object({
   pollIntervalMs: z.number().optional(),
   maxConcurrent: z.number().optional(),
+  onlyOwnTickets: z.boolean().optional(),
   branchTemplate: z.string().optional(),
   setupTimeoutMs: z.number().optional(),
   repoConfig: z.record(z.string(), RepoConfigEntryInputSchema).optional(),

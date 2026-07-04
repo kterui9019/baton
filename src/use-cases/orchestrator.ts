@@ -129,12 +129,22 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     log,
   });
 
+  async function resolveOperatorUserId(): Promise<string | null> {
+    try {
+      return await kanban().getBotUserId();
+    } catch (err) {
+      log.warn("operator_user", { msg: oneLine(String(err)) });
+      return null;
+    }
+  }
+
   async function dryRunTick(): Promise<void> {
     try {
+      const operatorUserId = await resolveOperatorUserId();
       const candidates = await kanban().queryCandidates();
       log.info("candidates", { msg: `${candidates.length} 件` });
       for (const t of candidates) {
-        const decision = dispatchRunner.planEligibility(t);
+        const decision = dispatchRunner.planEligibility(t, operatorUserId);
         log.info("candidates", {
           page_id: t.pageId,
           msg: `${t.title} | repo=${t.repo ?? "-"} lane=${t.lane ?? "-"} → ${
@@ -166,9 +176,10 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       await lifecycleRunner.stopMovedOrDeletedRuns();
       await lifecycleRunner.terminalCleanup();
       await prWatchRunner.advancePrWatch();
+      const operatorUserId = await resolveOperatorUserId();
       const candidates = await kanban().queryCandidates();
       const needsInfoAnswers = await dispatchRunner.resolveNeedsInfoAnswers(candidates);
-      dispatchRunner.processTick(candidates, needsInfoAnswers);
+      dispatchRunner.processTick(candidates, needsInfoAnswers, operatorUserId);
     } catch (err) {
       log.warn("tracker_error", { msg: oneLine(String(err)) });
     }

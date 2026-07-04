@@ -92,11 +92,12 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
   processTick: (
     candidates: Ticket[],
     needsInfoAnswers: Map<string, boolean>,
+    operatorUserId: string | null,
   ) => void;
   /**
    * dry-run 用: 各候補の eligibility 判定結果を返すのみ（副作用なし）。
    */
-  planEligibility: (ticket: Ticket) => EligibilityDecision;
+  planEligibility: (ticket: Ticket, operatorUserId: string | null) => EligibilityDecision;
   /** needs_info の回答有無を全候補について解決する。副作用なし（KanbanPort 読み取りのみ）。 */
   resolveNeedsInfoAnswers: (candidates: Ticket[]) => Promise<Map<string, boolean>>;
 } {
@@ -276,15 +277,24 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
     await deps.kanbanIo.refreshLastEditedTime("failed_refresh", ticket.pageId, "failed");
   }
 
-  function planEligibility(ticket: Ticket): EligibilityDecision {
+  function eligibilityCfg(operatorUserId: string | null) {
     const c = deps.cfg();
     // GitHub provider は condition フィルタを queryCandidates の --label で消化済みで
     // Ticket.condition は常に null（github-kanban-adapter.ts 参照）のため、
     // conditionValue も null にして常に一致させる（Notion 用の "Local" と比較しない）。
     const conditionValue = c.kanban.provider === "github" ? null : c.kanban.notion.conditionValue;
+    return {
+      triggerLanes: c.kanban.triggerLanes,
+      conditionValue,
+      onlyOwnTickets: c.onlyOwnTickets,
+      operatorUserId,
+    };
+  }
+
+  function planEligibility(ticket: Ticket, operatorUserId: string | null): EligibilityDecision {
     return decideEligibility({
       ticket,
-      cfg: { triggerLanes: c.kanban.triggerLanes, conditionValue },
+      cfg: eligibilityCfg(operatorUserId),
       isActive: deps.active.has(ticket.pageId),
       ps: deps.getState().pages[ticket.pageId],
     });
@@ -308,7 +318,11 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
     return answers;
   }
 
-  function processTick(candidates: Ticket[], needsInfoAnswers: Map<string, boolean>): void {
+  function processTick(
+    candidates: Ticket[],
+    needsInfoAnswers: Map<string, boolean>,
+    operatorUserId: string | null,
+  ): void {
     const c = deps.cfg();
     const state = deps.getState();
     for (const t of candidates) {
@@ -322,13 +336,12 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
         });
       }
     }
-    const conditionValue = c.kanban.provider === "github" ? null : c.kanban.notion.conditionValue;
     const eligible = candidates
       .map((t) => ({
         t,
         decision: decideEligibility({
           ticket: t,
-          cfg: { triggerLanes: c.kanban.triggerLanes, conditionValue },
+          cfg: eligibilityCfg(operatorUserId),
           isActive: deps.active.has(t.pageId),
           ps: state.pages[t.pageId],
           needsInfoAnswered: needsInfoAnswers.get(t.pageId),

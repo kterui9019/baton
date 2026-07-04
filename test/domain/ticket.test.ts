@@ -12,6 +12,7 @@ test("sortTickets: created_time 昇順 → page_id 辞書順", () => {
     condition: null,
     lastEditedTime: "",
     createdTime: ct,
+    authorId: "",
   });
   const sorted = sortTickets([
     mk("b", "2026-01-02"),

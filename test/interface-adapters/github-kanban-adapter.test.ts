@@ -94,6 +94,7 @@ test("parseIssueListItem: 内部 Ticket へ変換", () => {
   expect(t!.repo).toBe("baton");
   expect(t!.condition).toBeNull();
   expect(t!.url).toBe("https://github.com/acme/baton/issues/7");
+  expect(t!.authorId).toBe("dev1");
 });
 
 test("parseIssueComments: gh api 出力配列を CommentInfo[] に変換", () => {

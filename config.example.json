@@ -1,6 +1,7 @@
 {
   "pollIntervalMs": 30000,
   "maxConcurrent": 2,
+  "onlyOwnTickets": true,
   "branchTemplate": "feature/notion-{id}/{slug}",
   "ghCommand": "gh",
   "prPollIntervalMs": 60000,

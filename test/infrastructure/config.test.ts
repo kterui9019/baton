@@ -136,6 +136,17 @@ test("validateConfig: 複数エラーは全件返す", () => {
   expect(errors.length).toBe(2);
 });
 
+test("DEFAULT_CONFIG: onlyOwnTickets は true", () => {
+  expect(DEFAULT_CONFIG.onlyOwnTickets).toBe(true);
+});
+
+test("loadConfig: onlyOwnTickets を false に上書きできる", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nsym-"));
+  const p = join(dir, "config.json");
+  writeFileSync(p, JSON.stringify({ onlyOwnTickets: false }));
+  expect(loadConfig(p).onlyOwnTickets).toBe(false);
+});
+
 test("DEFAULT_CONFIG: GitHub kanban / 新 agent プロバイダのデフォルト値", () => {
   expect(DEFAULT_CONFIG.kanban.github.lanePrefix).toBe("status:");
   expect(DEFAULT_CONFIG.kanban.github.conditionLabel).toBe("");

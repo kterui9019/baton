@@ -7,6 +7,13 @@ export interface EligibilityConfig {
   triggerLanes: string[];
   /** null は「condition チェックなし」（例: GitHub provider は Ticket.condition が常に null）。 */
   conditionValue: string | null;
+  /**
+   * true のとき operatorUserId と ticket.authorId が一致するチケットのみ dispatch 対象。
+   * 未指定時はフィルタなし（テスト互換）。
+   */
+  onlyOwnTickets?: boolean;
+  /** カンバン上の操作者 ID（getBotUserId の戻り値）。onlyOwnTickets 時に使用。 */
+  operatorUserId?: string | null;
 }
 
 /** needs_info variant を型で narrow して取り回すためのエイリアス。 */
@@ -157,6 +164,17 @@ export function decideEligibility(opts: {
   needsInfoAnswered?: boolean;
 }): EligibilityDecision {
   const { ticket: t, cfg, isActive, ps, needsInfoAnswered } = opts;
+  if (cfg.onlyOwnTickets) {
+    if (!cfg.operatorUserId) {
+      return { eligible: false, reason: "作成者フィルタ(操作者不明)" };
+    }
+    if (!t.authorId) {
+      return { eligible: false, reason: "作成者不明" };
+    }
+    if (t.authorId !== cfg.operatorUserId) {
+      return { eligible: false, reason: `作成者不一致(${t.authorId})` };
+    }
+  }
   if (!t.repo) return { eligible: false, reason: "リポジトリ未設定" };
   if (!t.lane || !cfg.triggerLanes.includes(t.lane)) {
     return { eligible: false, reason: `レーン対象外(${t.lane})` };

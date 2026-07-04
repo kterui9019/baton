@@ -38,6 +38,7 @@ const NotionPageSchema = z.object({
   properties: z.record(z.string(), z.unknown()).optional(),
   last_edited_time: z.string().optional(),
   created_time: z.string().optional(),
+  created_by: z.object({ id: z.string().optional() }).optional(),
   is_archived: z.boolean().optional(),
   in_trash: z.boolean().optional(),
 });
@@ -61,6 +62,7 @@ export function parseTicket(pageJson: unknown, config: Config): Ticket {
     condition: selectName(props[config.kanban.notion.conditionProperty]),
     lastEditedTime: page.last_edited_time ?? "",
     createdTime: page.created_time ?? "",
+    authorId: page.created_by?.id ?? "",
   };
 }
 
