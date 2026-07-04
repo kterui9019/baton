@@ -1,3 +1,4 @@
+import { match } from "ts-pattern";
 import { nowIso } from "../infrastructure/format.ts";
 
 export type PageStatus =
@@ -99,6 +100,193 @@ export function rearmPrWatch(
     autoReworkCount: keepCount ? (prev?.autoReworkCount ?? 0) : 0,
     reworkedSha: prev?.reworkedSha,
     handledReviewAt: prev?.handledReviewAt,
+  };
+}
+
+/**
+ * ワークスペース情報（branch/workspace/repoDir）を PageStateCommon にマージする純粋関数。
+ * dispatch 準備段階で作成した worktree を状態に反映するのに使う。
+ */
+export function assignWorkspace(
+  prev: PageState | undefined,
+  ws: { branch: string; path: string; repoDir: string },
+  now: string = nowIso(),
+): PageState {
+  const base: PageStateCommon = {
+    attempt: prev?.attempt ?? 1,
+    branch: ws.branch,
+    workspace: ws.path,
+    repoDir: ws.repoDir,
+    prUrl: prev?.prUrl,
+    prWatch: prev?.prWatch,
+    lastEditedTime: prev?.lastEditedTime,
+    sessionId: prev?.sessionId,
+    updatedAt: now,
+  };
+  if (!prev) return { ...base, status: "running" };
+  return match<PageState, PageState>(prev)
+    .with({ status: "retry_queued" }, (p) => ({ ...base, status: p.status, retryAt: p.retryAt }))
+    .with({ status: "needs_info" }, (p) => ({
+      ...base,
+      status: p.status,
+      questionAskedAt: p.questionAskedAt,
+      question: p.question,
+    }))
+    .with({ status: "running" }, () => ({ ...base, status: "running" }))
+    .with({ status: "done" }, () => ({ ...base, status: "done" }))
+    .with({ status: "failed" }, () => ({ ...base, status: "failed" }))
+    .exhaustive();
+}
+
+/** dispatch 開始時に prev から running 状態を組む。branch/workspace/repoDir/prUrl/prWatch は引き継ぐ。 */
+export function toRunning(prev: PageState | undefined, attempt: number): PageState {
+  return {
+    status: "running",
+    attempt,
+    branch: prev?.branch,
+    workspace: prev?.workspace,
+    repoDir: prev?.repoDir,
+    prUrl: prev?.prUrl,
+    prWatch: prev?.prWatch,
+    updatedAt: nowIso(),
+  };
+}
+
+/**
+ * 成功時の done 状態を組む。PR ありなら prWatch を rearm、なしなら prWatch なし。
+ * keepPrWatchCount=true（ci_failure 由来 rework）のとき autoReworkCount を維持する。
+ */
+export function toDone(opts: {
+  prev: PageState | undefined;
+  attempt: number;
+  workspace: { branch: string; path: string; repoDir: string };
+  prUrl: string | undefined;
+  keepPrWatchCount: boolean;
+  sessionId: string | undefined;
+}): PageState {
+  const { prev, attempt, workspace: ws, prUrl, keepPrWatchCount, sessionId } = opts;
+  return {
+    status: "done",
+    attempt,
+    branch: ws.branch,
+    workspace: ws.path,
+    repoDir: ws.repoDir,
+    prUrl,
+    prWatch: prUrl ? rearmPrWatch(prev?.prWatch, prUrl, keepPrWatchCount) : undefined,
+    sessionId: sessionId ?? prev?.sessionId,
+    lastEditedTime: prev?.lastEditedTime,
+    updatedAt: nowIso(),
+  };
+}
+
+/** needs_info 状態を組む。question/questionAskedAt を確定し、sessionId は引き継ぎ or 更新。 */
+export function toNeedsInfo(opts: {
+  prev: PageState | undefined;
+  attempt: number;
+  workspace: { branch: string; path: string; repoDir: string };
+  question: string;
+  questionAskedAt: string;
+  sessionId: string | undefined;
+}): PageState {
+  const { prev, attempt, workspace: ws, question, questionAskedAt, sessionId } = opts;
+  return {
+    status: "needs_info",
+    attempt,
+    branch: ws.branch,
+    workspace: ws.path,
+    repoDir: ws.repoDir,
+    prUrl: prev?.prUrl,
+    prWatch: prev?.prWatch,
+    lastEditedTime: prev?.lastEditedTime,
+    sessionId: sessionId ?? prev?.sessionId,
+    questionAskedAt,
+    question,
+    updatedAt: nowIso(),
+  };
+}
+
+/** 起動リカバリ経由の done 確定（前回 running の branch/workspace/repoDir をそのまま引き継ぐ）。 */
+export function toDoneRecovered(opts: {
+  prev: PageState;
+  prUrl: string | undefined;
+}): PageState {
+  const { prev, prUrl } = opts;
+  return {
+    status: "done",
+    attempt: prev.attempt,
+    branch: prev.branch,
+    workspace: prev.workspace,
+    repoDir: prev.repoDir,
+    prUrl,
+    prWatch: prUrl ? rearmPrWatch(prev.prWatch, prUrl, true) : undefined,
+    lastEditedTime: prev.lastEditedTime,
+    sessionId: prev.sessionId,
+    updatedAt: nowIso(),
+  };
+}
+
+/** 起動リカバリ経由の needs_info 確定（前回 running の branch/workspace/repoDir/prUrl を引き継ぐ）。 */
+export function toNeedsInfoRecovered(opts: {
+  prev: PageState;
+  question: string;
+  questionAskedAt: string;
+}): PageState {
+  const { prev, question, questionAskedAt } = opts;
+  return {
+    status: "needs_info",
+    attempt: prev.attempt,
+    branch: prev.branch,
+    workspace: prev.workspace,
+    repoDir: prev.repoDir,
+    prUrl: prev.prUrl,
+    prWatch: prev.prWatch,
+    lastEditedTime: prev.lastEditedTime,
+    sessionId: prev.sessionId,
+    questionAskedAt,
+    question,
+    updatedAt: nowIso(),
+  };
+}
+
+/** retry_queued へ降格（onFailure 経由）。attempt 据え置きで retryAt=now+delay。sessionId 更新可。 */
+export function toRetryQueued(opts: {
+  prev: PageState | undefined;
+  attempt: number;
+  retryAt: number;
+  sessionId: string | undefined;
+}): PageState {
+  const { prev, attempt, retryAt, sessionId } = opts;
+  const base: PageStateCommon =
+    prev ??
+    ({ attempt, updatedAt: nowIso() } as PageStateCommon);
+  return {
+    ...base,
+    status: "retry_queued",
+    attempt,
+    retryAt,
+    sessionId: sessionId ?? prev?.sessionId,
+    updatedAt: nowIso(),
+  };
+}
+
+/** failed 確定（リトライ上限到達）。lastEditedTime を「今回失敗時点の ticket 値」で更新。 */
+export function toFailed(opts: {
+  prev: PageState | undefined;
+  attempt: number;
+  ticketLastEditedTime: string | undefined;
+  sessionId: string | undefined;
+}): PageState {
+  const { prev, attempt, ticketLastEditedTime, sessionId } = opts;
+  const base: PageStateCommon =
+    prev ??
+    ({ attempt, updatedAt: nowIso() } as PageStateCommon);
+  return {
+    ...base,
+    status: "failed",
+    attempt,
+    lastEditedTime: ticketLastEditedTime,
+    sessionId: sessionId ?? prev?.sessionId,
+    updatedAt: nowIso(),
   };
 }
 

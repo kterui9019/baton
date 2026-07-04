@@ -33,9 +33,16 @@ Clean Architecture, 4 layers, dependencies always point inward. Kanban provider 
 src/
   domain/            pure business rules, zero external deps, no classes (except errors.ts)
   use-cases/
-    ports/           KanbanPort / CodingAgentPort / CodeHostPort / WorkspacePort / StateRepositoryPort
-    orchestrator.ts   core use case: tick / dispatch / reconcile / prReconcile / needs_info — talks to the outside world only through Ports
-    prompt-builder.ts prompt rendering (including rework/resume sections)
+    ports/                KanbanPort / CodingAgentPort / CodeHostPort / WorkspacePort / StateRepositoryPort
+    orchestrator.ts        thin facade wiring the runners below (shared state + tick ordering only)
+    dispatch-runner.ts     claim → prepare workspace → run agent → onSuccess/onNeedsInfo/onFailure
+    pr-watch-runner.ts     advancePrWatch + handling of decidePrWatchAction results (merged/ci_green/ci_rework 等)
+    lifecycle-runner.ts    stopMovedOrDeletedRuns / terminalCleanup / shutdown
+    startup-recovery.ts    orphan running rows → done / needs_info / retry_queued on startup
+    kanban-io.ts           safe KanbanPort wrappers (safeUpdate / refreshLastEditedTime / fetchFeedbackComments)
+    messages.ts            pure kanban activity / comment string builders
+    prompt-builder.ts      prompt rendering (including rework/resume sections) + template file loading
+    result-helpers.ts      tryAsync — Promise → Result<T,string>
   interface-adapters/
     notion/           KanbanPort impl, wraps `ntn` CLI
     claude/            CodingAgentPort impl, spawns `claude -p`
@@ -48,7 +55,9 @@ src/
   main.ts               CLI entry: arg parsing, validateConfig, poll loop, signal handling
 ```
 
-To add a new Kanban provider or coding agent, add a new adapter under `interface-adapters/` implementing the relevant Port, then wire it in `composition.ts` based on `config.kanban.provider` / `config.agent.provider`. `use-cases/orchestrator.ts` should never need to change for this.
+To add a new Kanban provider or coding agent, add a new adapter under `interface-adapters/` implementing the relevant Port, then wire it in `composition.ts` based on `config.kanban.provider` / `config.agent.provider`. The runners under `use-cases/` should not need to change for this.
+
+`orchestrator.ts` itself is intentionally a thin composition file: shared mutable state (`state`, `active` Map, `shuttingDown` flag), Port factories bound to the current config, and the ordering of a single `tick()` cycle. All actual dispatch / PR watching / cleanup / recovery logic lives in the per-runner files above, and all state transitions go through pure builders in `domain/state.ts` (`toRunning` / `toDone` / `toNeedsInfo` / `toRetryQueued` / `toFailed` / `toDoneRecovered` / `toNeedsInfoRecovered`).
 
 ### Key domain modules (`src/domain/`)
 
@@ -61,7 +70,7 @@ To add a new Kanban provider or coding agent, add a new adapter under `interface
 - `backoff.ts` — `computeBackoff` retry backoff calculation
 - `errors.ts` — the one place classes are used, for `instanceof` narrowing
 
-### Core flow to understand before touching orchestrator.ts
+### Core flow (spread across the runners in `use-cases/`)
 
 1. **Poll** the Kanban (Notion) for candidates matching `triggerLanes` + condition + repo set, not already running.
 2. **Dispatch**: claim in state, resolve/clone repo, create a git worktree + branch, render the prompt template, spawn the agent CLI with stdin-piped prompt, write result to `state/results/<page_id>.json`.

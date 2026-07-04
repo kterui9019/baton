@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { match } from "ts-pattern";
 import type { ResumeContext } from "../domain/eligibility.ts";
+import type { Ticket } from "../domain/ticket.ts";
+import type { WorkspaceInfo } from "../domain/workspace.ts";
 
 export interface FeedbackComment {
   createdTime: string;
@@ -200,4 +204,69 @@ export function renderTemplate(
     const v = vars[name];
     return v === undefined || v === null ? "" : String(v);
   });
+}
+
+/** dispatch 時にテンプレートへ渡す変数を組む。orchestrator に散らばっていた変数マップの集約。 */
+export function buildPromptVars(opts: {
+  ticket: Ticket;
+  workspace: WorkspaceInfo;
+  resultFile: string;
+  attempt: number;
+  body: string;
+  resumeSection: string;
+}): PromptVars {
+  const { ticket, workspace: ws, resultFile, attempt, body, resumeSection } = opts;
+  return {
+    title: ticket.title,
+    body,
+    repo: ticket.repo ?? "",
+    branch: ws.branch,
+    base_branch: ws.baseBranch,
+    page_url: ticket.url,
+    page_id: ticket.pageId,
+    result_file: resultFile,
+    attempt: String(attempt),
+    rework: resumeSection,
+  };
+}
+
+/**
+ * テンプレートファイルを読み込んで render する。
+ * templatePathConfig が絶対パスならそのまま、相対パスなら dataHome 基準で解決する。
+ */
+export function renderTemplateFile(
+  templatePathConfig: string,
+  dataHome: string,
+  vars: PromptVars,
+): string {
+  const path = isAbsolute(templatePathConfig)
+    ? templatePathConfig
+    : join(dataHome, templatePathConfig);
+  const template = readFileSync(path, "utf8");
+  return renderTemplate(template, vars);
+}
+
+/**
+ * dispatch 時に必要な 3 種のプロンプト（本文/システム/resume 用）をまとめて描画する。
+ * systemPromptTemplate が "" のときは systemPrompt を undefined にし、
+ * `--append-system-prompt` を付与しない。
+ */
+export function renderDispatchPrompts(opts: {
+  dataHome: string;
+  templates: {
+    prompt: string;
+    resumePrompt: string;
+    systemPrompt: string;
+  };
+  vars: PromptVars;
+  useNativeResume: boolean;
+}): { prompt: string; systemPrompt: string | undefined } {
+  const { dataHome, templates, vars, useNativeResume } = opts;
+  const prompt = useNativeResume
+    ? renderTemplateFile(templates.resumePrompt, dataHome, vars)
+    : renderTemplateFile(templates.prompt, dataHome, vars);
+  const systemPrompt = templates.systemPrompt
+    ? renderTemplateFile(templates.systemPrompt, dataHome, vars)
+    : undefined;
+  return { prompt, systemPrompt };
 }
