@@ -5,8 +5,13 @@ import type { AgentResult } from "../domain/agent-result.ts";
 import { parseResultFile } from "../domain/agent-result.ts";
 import { computeBackoff } from "../domain/backoff.ts";
 import { KanbanPageNotFoundError } from "../domain/errors.ts";
-import type { EligibilityDecision, ResumeContext } from "../domain/eligibility.ts";
-import { decideEligibility, nextDispatchParams, resolveResumePlan } from "../domain/eligibility.ts";
+import type { EligibilityDecision, ResumeContext, ResumeInput } from "../domain/eligibility.ts";
+import {
+  buildResumeContext,
+  decideEligibility,
+  nextDispatchParams,
+  resolveResumePlan,
+} from "../domain/eligibility.ts";
 import type { Result } from "../domain/result.ts";
 import { err as errResult, ok } from "../domain/result.ts";
 import type { PrCheck, PrWatchAction, ReviewInfo } from "../domain/review.ts";
@@ -354,17 +359,17 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     }
     const eligible = candidates
       .map((t) => ({ t, decision: eligibility(t, needsInfoAnswers?.get(t.pageId)) }))
-      .filter((e) => e.decision.eligible);
+      .filter(
+        (e): e is { t: Ticket; decision: EligibilityDecision & { eligible: true } } =>
+          e.decision.eligible,
+      );
     log.info("candidates", {
       msg: `${candidates.length} 件中 ${eligible.length} 件が dispatch 可能`,
     });
     for (const { t, decision } of eligible) {
       if (shuttingDown) break;
       if (active.size >= c.maxConcurrent) break;
-      const { attempt, resume } = nextDispatchParams(
-        decision.resumeKind,
-        state.pages[t.pageId],
-      );
+      const { attempt, resume } = nextDispatchParams(decision.run, state.pages[t.pageId]);
       active.set(t.pageId, {
         pageId: t.pageId,
         attempt,
@@ -1035,12 +1040,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
           msg: `CI 失敗を検知 → 自動 rework (${nextWatch.autoReworkCount}/${c.autoReworkLimit}) sha=${a.headSha}`,
         });
         const ciFailures = await codeHost().fetchFailedCheckLogs(watch.prUrl, a.failedChecks);
-        await dispatchAutoRework(pageId, {
-          kind: "ci_failure",
-          prUrl: watch.prUrl,
-          since: ps.lastEditedTime,
-          ciFailures,
-        });
+        await dispatchAutoRework(pageId, { kind: "ci_failure", from: ps, ciFailures });
       })
       .with({ type: "ci_limit" }, async (a) => {
         const nextWatch: PrWatchState = { ...watch, awaitingHuman: true };
@@ -1100,12 +1100,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
         if (lane0) {
           await safeKanban("review_rework_lane", pageId, (k) => k.updateTicket(pageId, { lane: lane0 }));
         }
-        await dispatchAutoRework(pageId, {
-          kind: "review_changes",
-          prUrl: watch.prUrl,
-          since: ps.lastEditedTime,
-          reviews,
-        });
+        await dispatchAutoRework(pageId, { kind: "review_changes", from: ps, reviews });
       })
       .with({ type: "none" }, (a) => {
         log.info("pr_watch", { page_id: pageId, msg: `変化なし (${a.reason}): ${watch.prUrl}` });
@@ -1117,7 +1112,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     return !shuttingDown && active.size < cfg().maxConcurrent;
   }
 
-  async function dispatchAutoRework(pageId: string, resume: ResumeContext): Promise<void> {
+  async function dispatchAutoRework(pageId: string, input: ResumeInput): Promise<void> {
     const snapshot = await kanban().getPage(pageId);
     const ticket = snapshot.ticket;
     if (!ticket.repo) {
@@ -1125,6 +1120,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       return;
     }
     const attempt = 1;
+    const resume = buildResumeContext(input);
     active.set(pageId, {
       pageId,
       attempt,

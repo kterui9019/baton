@@ -6,6 +6,11 @@ import {
   nextDispatchParams,
   resolveResumePlan,
 } from "../../src/domain/eligibility.ts";
+import type {
+  EligibilityDecision,
+  NeedsInfoState,
+  RunPlan,
+} from "../../src/domain/eligibility.ts";
 import type { PageState } from "../../src/domain/state.ts";
 import type { Ticket } from "../../src/domain/ticket.ts";
 
@@ -71,19 +76,34 @@ function decide(t: Ticket, ps?: PageState, isActive = false, needsInfoAnswered?:
   return decideEligibility({ ticket: t, cfg, isActive, ps, needsInfoAnswered });
 }
 
-test("未処理のチケットは eligible", () => {
+/** eligible=true に narrow するアサーション。TS の判別 Union で `d.run` にアクセスできるようにする。 */
+function assertEligible(d: EligibilityDecision): asserts d is EligibilityDecision & { eligible: true } {
+  if (!d.eligible) throw new Error(`expected eligible, got: ${d.reason}`);
+}
+function assertIneligible(d: EligibilityDecision): asserts d is EligibilityDecision & { eligible: false } {
+  if (d.eligible) throw new Error(`expected ineligible, got: ${d.reason}`);
+}
+
+test("未処理のチケットは eligible / run=fresh", () => {
   const d = decide(ticket(), undefined);
-  expect(d.eligible).toBe(true);
-  expect(d.rework).toBeUndefined();
+  assertEligible(d);
+  expect(d.run.kind).toBe("fresh");
 });
 
-test("done: 記録時刻より編集が進んでいれば rework として eligible", () => {
+test("done: 記録時刻より編集が進んでいれば human_rework で eligible", () => {
   const d = decide(
     ticket({ lastEditedTime: "2026-07-02T12:00:00.000Z" }),
-    pageState({ status: "done", lastEditedTime: "2026-07-02T11:00:00.000Z", prUrl: "https://github.com/o/r/pull/1" }),
+    pageState({
+      status: "done",
+      lastEditedTime: "2026-07-02T11:00:00.000Z",
+      prUrl: "https://github.com/o/r/pull/1",
+    }),
   );
-  expect(d.eligible).toBe(true);
-  expect(d.rework).toBe(true);
+  assertEligible(d);
+  expect(d.run.kind).toBe("human_rework");
+  if (d.run.kind === "human_rework") {
+    expect(d.run.from.status).toBe("done");
+  }
 });
 
 test("done: 編集が進んでいなければスキップ（成功直後の stale クエリ対策）", () => {
@@ -101,13 +121,13 @@ test("done: 基準時刻が未記録なら安全側でスキップ", () => {
   expect(d.reason).toContain("基準時刻なし");
 });
 
-test("failed: 編集後の再実行は rework フラグ付き", () => {
+test("failed: 編集後の再実行は human_rework", () => {
   const d = decide(
     ticket({ lastEditedTime: "2026-07-02T12:00:00.000Z" }),
     pageState({ status: "failed", lastEditedTime: "2026-07-02T11:00:00.000Z" }),
   );
-  expect(d.eligible).toBe(true);
-  expect(d.rework).toBe(true);
+  assertEligible(d);
+  expect(d.run.kind).toBe("human_rework");
 });
 
 test("failed: 未編集ならスキップ", () => {
@@ -123,10 +143,10 @@ test("running / 処理中(active) はスキップ", () => {
   expect(decide(ticket(), undefined, true).eligible).toBe(false);
 });
 
-test("retry_queued: 満了で eligible（rework ではない）", () => {
+test("retry_queued: 満了で eligible（run=fresh、attempt はリセットしない）", () => {
   const d = decide(ticket(), pageState({ status: "retry_queued", retryAt: Date.now() - 1000 }));
-  expect(d.eligible).toBe(true);
-  expect(d.rework).toBeUndefined();
+  assertEligible(d);
+  expect(d.run.kind).toBe("fresh");
 });
 
 test("retry_queued: 未満了はスキップ", () => {
@@ -140,14 +160,6 @@ test("レーン対象外 / リポジトリ未設定 / 条件不一致はスキ�
   expect(decide(ticket({ condition: "Cloud" })).eligible).toBe(false);
 });
 
-test("done/failed の rework には resumeKind=human_rework が付く", () => {
-  const d = decide(
-    ticket({ lastEditedTime: "2026-07-02T12:00:00.000Z" }),
-    pageState({ status: "done", lastEditedTime: "2026-07-02T11:00:00.000Z" }),
-  );
-  expect(d.resumeKind).toBe("human_rework");
-});
-
 function needsInfoState(over: Partial<PageState> = {}): PageState {
   return pageState({
     status: "needs_info",
@@ -158,16 +170,20 @@ function needsInfoState(over: Partial<PageState> = {}): PageState {
   });
 }
 
-test("needs_info: 回答コメントあり(answered=true)は resume として eligible", () => {
+test("needs_info: 回答コメントあり(answered=true)は needs_info_answer で eligible / from が narrow される", () => {
   const d = decide(
     ticket({ lastEditedTime: "2026-07-02T10:30:05.000Z" }),
     needsInfoState(),
     false,
     true,
   );
-  expect(d.eligible).toBe(true);
-  expect(d.resumeKind).toBe("needs_info_answer");
-  expect(d.rework).toBeUndefined();
+  assertEligible(d);
+  expect(d.run.kind).toBe("needs_info_answer");
+  if (d.run.kind === "needs_info_answer") {
+    // 型上 from は NeedsInfoState、runtime でも needs_info。
+    expect(d.run.from.status).toBe("needs_info");
+    expect(d.run.from.question).toBe("確認事項");
+  }
 });
 
 test("needs_info: ページ本文編集でも eligible（answered=false でも）", () => {
@@ -177,8 +193,8 @@ test("needs_info: ページ本文編集でも eligible（answered=false でも�
     false,
     false,
   );
-  expect(d.eligible).toBe(true);
-  expect(d.resumeKind).toBe("needs_info_answer");
+  assertEligible(d);
+  expect(d.run.kind).toBe("needs_info_answer");
 });
 
 test("needs_info: answered 未指定は needsCommentCheck を返してスキップ", () => {
@@ -188,7 +204,7 @@ test("needs_info: answered 未指定は needsCommentCheck を返してスキッ�
     false,
     undefined,
   );
-  expect(d.eligible).toBe(false);
+  assertIneligible(d);
   expect(d.needsCommentCheck).toBe(true);
 });
 
@@ -199,7 +215,7 @@ test("needs_info: 回答なし(answered=false)・未編集はスキップ（回�
     false,
     false,
   );
-  expect(d.eligible).toBe(false);
+  assertIneligible(d);
   expect(d.needsCommentCheck).toBeUndefined();
   expect(d.reason).toContain("回答待ち");
 });
@@ -221,31 +237,28 @@ test("needs_info: lastEditedTime 未記録なら本文編集では発火しな�
   expect(answered.eligible).toBe(true);
 });
 
-const donePs = (over: Partial<PageState> = {}): PageState =>
-  ({
-    status: "done",
-    attempt: 3,
-    lastEditedTime: "2026-07-01T00:00:00.000Z",
-    prUrl: "https://github.com/o/r/pull/1",
-    updatedAt: "t",
-    ...over,
-  }) as PageState;
+// ---- buildResumeContext / nextDispatchParams: ResumeInput ADT 経由 ----
 
-const needsInfoPs = (over: Partial<PageState> = {}): PageState =>
-  ({
-    status: "needs_info",
-    attempt: 1,
-    lastEditedTime: "2026-07-01T00:00:00.000Z",
-    questionAskedAt: "2026-07-02T00:00:00.000Z",
-    question: "A案かB案か",
-    prUrl: "https://github.com/o/r/pull/1",
-    updatedAt: "t",
-    ...over,
-  }) as PageState;
+const donePs: PageState = {
+  status: "done",
+  attempt: 3,
+  lastEditedTime: "2026-07-01T00:00:00.000Z",
+  prUrl: "https://github.com/o/r/pull/1",
+  updatedAt: "t",
+};
 
-test("buildResumeContext: needs_info_answer + prev=needs_info → questionAskedAt/question を採用", () => {
-  const r = buildResumeContext("needs_info_answer", needsInfoPs());
-  expect(r).toEqual({
+const needsInfoPs: NeedsInfoState = {
+  status: "needs_info",
+  attempt: 1,
+  lastEditedTime: "2026-07-01T00:00:00.000Z",
+  questionAskedAt: "2026-07-02T00:00:00.000Z",
+  question: "A案かB案か",
+  prUrl: "https://github.com/o/r/pull/1",
+  updatedAt: "t",
+};
+
+test("buildResumeContext: needs_info_answer → from の questionAskedAt/question を採用", () => {
+  expect(buildResumeContext({ kind: "needs_info_answer", from: needsInfoPs })).toEqual({
     kind: "needs_info_answer",
     prUrl: "https://github.com/o/r/pull/1",
     since: "2026-07-02T00:00:00.000Z",
@@ -253,51 +266,56 @@ test("buildResumeContext: needs_info_answer + prev=needs_info → questionAskedA
   });
 });
 
-test("buildResumeContext: needs_info_answer + prev!=needs_info → lastEditedTime にフォールバック（question なし）", () => {
-  const r = buildResumeContext("needs_info_answer", donePs());
-  expect(r).toEqual({
-    kind: "needs_info_answer",
+test("buildResumeContext: human_rework は lastEditedTime を since に、question なし", () => {
+  expect(buildResumeContext({ kind: "human_rework", from: donePs })).toEqual({
+    kind: "human_rework",
     prUrl: "https://github.com/o/r/pull/1",
     since: "2026-07-01T00:00:00.000Z",
   });
 });
 
-test("buildResumeContext: human_rework / ci_failure / review_changes は lastEditedTime を since に、question なし", () => {
-  for (const kind of ["human_rework", "ci_failure", "review_changes"] as const) {
-    expect(buildResumeContext(kind, donePs())).toEqual({
-      kind,
-      prUrl: "https://github.com/o/r/pull/1",
-      since: "2026-07-01T00:00:00.000Z",
-    });
-  }
-});
-
-test("buildResumeContext: prev=undefined でも死なない（全部 undefined になる）", () => {
-  expect(buildResumeContext("human_rework", undefined)).toEqual({
-    kind: "human_rework",
-    prUrl: undefined,
-    since: undefined,
+test("buildResumeContext: ci_failure は ciFailures を透過、since=lastEditedTime", () => {
+  expect(
+    buildResumeContext({ kind: "ci_failure", from: donePs, ciFailures: "log-tail" }),
+  ).toEqual({
+    kind: "ci_failure",
+    prUrl: "https://github.com/o/r/pull/1",
+    since: "2026-07-01T00:00:00.000Z",
+    ciFailures: "log-tail",
   });
 });
 
-test("nextDispatchParams: resumeKind なし → attempt = prev.attempt+1、resume=undefined", () => {
-  expect(nextDispatchParams(undefined, donePs({ attempt: 4 }))).toEqual({
+test("buildResumeContext: review_changes は reviews を透過", () => {
+  const reviews = [{ author: "alice", body: "please fix", submittedAt: "2026-07-02T00:00:00Z" }];
+  expect(
+    buildResumeContext({ kind: "review_changes", from: donePs, reviews }),
+  ).toEqual({
+    kind: "review_changes",
+    prUrl: "https://github.com/o/r/pull/1",
+    since: "2026-07-01T00:00:00.000Z",
+    reviews,
+  });
+});
+
+test("nextDispatchParams: run=fresh → attempt = prev.attempt+1、resume=undefined", () => {
+  const run: RunPlan = { kind: "fresh" };
+  expect(nextDispatchParams(run, { ...donePs, attempt: 4 })).toEqual({
     attempt: 5,
     resume: undefined,
   });
 });
 
-test("nextDispatchParams: resumeKind なし + prev なし → attempt=1", () => {
-  expect(nextDispatchParams(undefined, undefined)).toEqual({
+test("nextDispatchParams: run=fresh + prev なし → attempt=1", () => {
+  expect(nextDispatchParams({ kind: "fresh" }, undefined)).toEqual({
     attempt: 1,
     resume: undefined,
   });
 });
 
-test("nextDispatchParams: resumeKind あり → attempt=1 で振り直し、buildResumeContext と一致", () => {
-  const prev = needsInfoPs();
-  expect(nextDispatchParams("needs_info_answer", prev)).toEqual({
+test("nextDispatchParams: run=needs_info_answer → attempt=1 で振り直し、buildResumeContext と一致", () => {
+  const run: RunPlan = { kind: "needs_info_answer", from: needsInfoPs };
+  expect(nextDispatchParams(run, needsInfoPs)).toEqual({
     attempt: 1,
-    resume: buildResumeContext("needs_info_answer", prev),
+    resume: buildResumeContext(run),
   });
 });

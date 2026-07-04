@@ -9,19 +9,42 @@ export interface EligibilityConfig {
   conditionValue: string | null;
 }
 
-export interface EligibilityDecision {
-  eligible: boolean;
-  reason: string;
-  /** 人間による差し戻し再実行（done/failed からのやり直し）。attempt をリセットする。 */
-  rework?: boolean;
-  /** eligible な resume（rework 含む）の種別。attempt=1 で ResumeContext を組む。 */
-  resumeKind?: ResumeContext["kind"];
-  /**
-   * needs_info でコメント確認が未実施（needsInfoAnswered 未指定）。
-   * 呼び出し側にコメント確認（checkNeedsInfoAnswers）を要求する。
-   */
-  needsCommentCheck?: boolean;
-}
+/** needs_info variant を型で narrow して取り回すためのエイリアス。 */
+export type NeedsInfoState = Extract<PageState, { status: "needs_info" }>;
+
+/**
+ * eligible 判定で決まる「なぜ dispatch するか」の ADT。
+ * - fresh: 通常実行（未処理 / retry_queued 満了）。attempt = prev.attempt+1（未処理なら 1）。
+ * - human_rework: 人間による差し戻し（done/failed 編集後）。attempt=1、新規セッション。
+ * - needs_info_answer: 質問への回答検知で再開。attempt=1、ネイティブ resume 可。
+ *   source state を needs_info に narrow しているため questionAskedAt/question に
+ *   optional chaining なしで届く。
+ */
+export type RunPlan =
+  | { kind: "fresh" }
+  | { kind: "human_rework"; from: PageState }
+  | { kind: "needs_info_answer"; from: NeedsInfoState };
+
+/**
+ * dispatch 実行の入力 ADT。RunPlan の上位集合で、advancePrWatch から発火する
+ * CI/レビュー起因の自動 rework を追加したもの。ci_failure / review_changes は
+ * 「上限まで自動でやり直す」経路なので、そのメタ情報（失敗チェックのログ・
+ * レビューコメント一覧）を variant ごとに持つ。
+ */
+export type ResumeInput =
+  | { kind: "human_rework"; from: PageState }
+  | { kind: "needs_info_answer"; from: NeedsInfoState }
+  | { kind: "ci_failure"; from: PageState; ciFailures?: string }
+  | {
+      kind: "review_changes";
+      from: PageState;
+      reviews?: Array<{ author: string; body: string; submittedAt: string }>;
+    };
+
+/** eligibility 判定の結果 ADT。false 側だけが needsCommentCheck を持ちうる。 */
+export type EligibilityDecision =
+  | { eligible: false; reason: string; needsCommentCheck?: boolean }
+  | { eligible: true; reason: string; run: RunPlan };
 
 /** resume（rework / CI 修正 / レビュー対応 / 質問回答）実行に引き継ぐ前回実行のコンテキスト。 */
 export interface ResumeContext {
@@ -44,43 +67,51 @@ export function isNativeResumable(kind: ResumeContext["kind"]): boolean {
 }
 
 /**
- * ResumeKind と前回 PageState から ResumeContext を組む純粋関数。
- * needs_info_answer は前回が needs_info の前提で question/since を拾う。
- * それ以外の resume 種別は prev.lastEditedTime を since に据えるだけ。
+ * ResumeInput から ResumeContext を組む純粋関数。variant で完全に場合分けするので
+ * 実行時の status 文字列比較や optional chaining は不要（needs_info_answer の from は
+ * 型レベルで needs_info に narrow されている）。
  */
-export function buildResumeContext(
-  resumeKind: ResumeContext["kind"],
-  prev: PageState | undefined,
-): ResumeContext {
-  if (resumeKind === "needs_info_answer" && prev?.status === "needs_info") {
-    return {
-      kind: "needs_info_answer",
-      prUrl: prev.prUrl,
-      since: prev.questionAskedAt,
-      question: prev.question,
-    };
-  }
-  return {
-    kind: resumeKind,
-    prUrl: prev?.prUrl,
-    since: prev?.lastEditedTime,
-  };
+export function buildResumeContext(input: ResumeInput): ResumeContext {
+  return match(input)
+    .with({ kind: "human_rework" }, ({ from }) => ({
+      kind: "human_rework" as const,
+      prUrl: from.prUrl,
+      since: from.lastEditedTime,
+    }))
+    .with({ kind: "needs_info_answer" }, ({ from }) => ({
+      kind: "needs_info_answer" as const,
+      prUrl: from.prUrl,
+      since: from.questionAskedAt,
+      question: from.question,
+    }))
+    .with({ kind: "ci_failure" }, ({ from, ciFailures }) => ({
+      kind: "ci_failure" as const,
+      prUrl: from.prUrl,
+      since: from.lastEditedTime,
+      ciFailures,
+    }))
+    .with({ kind: "review_changes" }, ({ from, reviews }) => ({
+      kind: "review_changes" as const,
+      prUrl: from.prUrl,
+      since: from.lastEditedTime,
+      reviews,
+    }))
+    .exhaustive();
 }
 
 /**
- * eligible な候補に対し、次に渡す attempt 番号と resume コンテキストを決める。
- * resume（rework/CI 再修正/レビュー対応/回答再開）は attempt=1 で振り直し、
- * 通常実行は前回 attempt+1。resume の有無で dispatch の起点意味が変わるので
- * ひとまとめの純粋関数にする。
+ * RunPlan と前回 prev から、dispatch に渡す attempt と ResumeContext を決める純粋関数。
+ * fresh は attempt = (prev?.attempt ?? 0)+1、それ以外は attempt=1 で振り直し。
+ * RunPlan の非 fresh バリアントは ResumeInput のサブセットなのでそのまま渡せる。
  */
 export function nextDispatchParams(
-  resumeKind: ResumeContext["kind"] | undefined,
+  run: RunPlan,
   prev: PageState | undefined,
 ): { attempt: number; resume: ResumeContext | undefined } {
-  if (!resumeKind) {
+  if (run.kind === "fresh") {
     return { attempt: (prev?.attempt ?? 0) + 1, resume: undefined };
   }
-  return { attempt: 1, resume: buildResumeContext(resumeKind, prev) };
+  return { attempt: 1, resume: buildResumeContext(run) };
 }
 
 export interface ResumePlan {
@@ -136,20 +167,16 @@ export function decideEligibility(opts: {
   if (isActive) {
     return { eligible: false, reason: "処理中" };
   }
-  if (!ps) return { eligible: true, reason: "未処理" };
+  if (!ps) return { eligible: true, reason: "未処理", run: { kind: "fresh" } };
 
-  return match(ps)
-    .with({ status: "running" }, () => ({
-      eligible: false,
-      reason: "running",
-    }))
+  return match<PageState, EligibilityDecision>(ps)
+    .with({ status: "running" }, () => ({ eligible: false, reason: "running" }))
     .with({ status: "done" }, (p) =>
       p.lastEditedTime && t.lastEditedTime > p.lastEditedTime
         ? {
             eligible: true,
             reason: "done→差し戻しで再実行",
-            rework: true,
-            resumeKind: "human_rework" as const,
+            run: { kind: "human_rework", from: p },
           }
         : {
             eligible: false,
@@ -161,14 +188,13 @@ export function decideEligibility(opts: {
         ? {
             eligible: true,
             reason: "failed→編集後の再実行",
-            rework: true,
-            resumeKind: "human_rework" as const,
+            run: { kind: "human_rework", from: p },
           }
         : { eligible: false, reason: "failed(未編集)" },
     )
     .with({ status: "retry_queued" }, (p) => {
       if (Date.now() >= p.retryAt) {
-        return { eligible: true, reason: "retry 満了" };
+        return { eligible: true, reason: "retry 満了", run: { kind: "fresh" } };
       }
       const waitS = Math.ceil((p.retryAt - Date.now()) / 1000);
       return { eligible: false, reason: `retry 待ち(${waitS}s)` };
@@ -178,19 +204,17 @@ export function decideEligibility(opts: {
         return {
           eligible: true,
           reason: "needs_info→回答コメントあり",
-          resumeKind: "needs_info_answer" as const,
+          run: { kind: "needs_info_answer", from: p },
         };
       }
-      // ページ本文の編集（回答を本文に追記したケース）。回答コメントも一緒に拾う。
       if (p.lastEditedTime && t.lastEditedTime > p.lastEditedTime) {
         return {
           eligible: true,
           reason: "needs_info→ページ本文編集",
-          resumeKind: "needs_info_answer" as const,
+          run: { kind: "needs_info_answer", from: p },
         };
       }
       if (needsInfoAnswered === undefined) {
-        // 呼び出し側にコメント確認（checkNeedsInfoAnswers）を要求する
         return {
           eligible: false,
           reason: "needs_info(コメント未確認)",
