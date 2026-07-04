@@ -43,6 +43,46 @@ export function isNativeResumable(kind: ResumeContext["kind"]): boolean {
   return kind !== "human_rework";
 }
 
+/**
+ * ResumeKind と前回 PageState から ResumeContext を組む純粋関数。
+ * needs_info_answer は前回が needs_info の前提で question/since を拾う。
+ * それ以外の resume 種別は prev.lastEditedTime を since に据えるだけ。
+ */
+export function buildResumeContext(
+  resumeKind: ResumeContext["kind"],
+  prev: PageState | undefined,
+): ResumeContext {
+  if (resumeKind === "needs_info_answer" && prev?.status === "needs_info") {
+    return {
+      kind: "needs_info_answer",
+      prUrl: prev.prUrl,
+      since: prev.questionAskedAt,
+      question: prev.question,
+    };
+  }
+  return {
+    kind: resumeKind,
+    prUrl: prev?.prUrl,
+    since: prev?.lastEditedTime,
+  };
+}
+
+/**
+ * eligible な候補に対し、次に渡す attempt 番号と resume コンテキストを決める。
+ * resume（rework/CI 再修正/レビュー対応/回答再開）は attempt=1 で振り直し、
+ * 通常実行は前回 attempt+1。resume の有無で dispatch の起点意味が変わるので
+ * ひとまとめの純粋関数にする。
+ */
+export function nextDispatchParams(
+  resumeKind: ResumeContext["kind"] | undefined,
+  prev: PageState | undefined,
+): { attempt: number; resume: ResumeContext | undefined } {
+  if (!resumeKind) {
+    return { attempt: (prev?.attempt ?? 0) + 1, resume: undefined };
+  }
+  return { attempt: 1, resume: buildResumeContext(resumeKind, prev) };
+}
+
 export interface ResumePlan {
   /** agent().start() に渡す session_id。undefined なら新規セッション。 */
   sessionIdForAgent: string | undefined;

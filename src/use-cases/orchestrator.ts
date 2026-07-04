@@ -6,7 +6,7 @@ import { parseResultFile } from "../domain/agent-result.ts";
 import { computeBackoff } from "../domain/backoff.ts";
 import { KanbanPageNotFoundError } from "../domain/errors.ts";
 import type { EligibilityDecision, ResumeContext } from "../domain/eligibility.ts";
-import { decideEligibility, resolveResumePlan } from "../domain/eligibility.ts";
+import { decideEligibility, nextDispatchParams, resolveResumePlan } from "../domain/eligibility.ts";
 import type { Result } from "../domain/result.ts";
 import { err as errResult, ok } from "../domain/result.ts";
 import type { PrCheck, PrWatchAction, ReviewInfo } from "../domain/review.ts";
@@ -361,22 +361,10 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     for (const { t, decision } of eligible) {
       if (shuttingDown) break;
       if (active.size >= c.maxConcurrent) break;
-      const prev = state.pages[t.pageId];
-      const resumeKind = decision.resumeKind;
-      const attempt = resumeKind ? 1 : (prev?.attempt ?? 0) + 1;
-      const resume: ResumeContext | undefined = resumeKind
-        ? {
-            kind: resumeKind,
-            prUrl: prev?.prUrl,
-            since:
-              resumeKind === "needs_info_answer"
-                ? prev?.status === "needs_info"
-                  ? prev.questionAskedAt
-                  : undefined
-                : prev?.lastEditedTime,
-            question: prev?.status === "needs_info" ? prev.question : undefined,
-          }
-        : undefined;
+      const { attempt, resume } = nextDispatchParams(
+        decision.resumeKind,
+        state.pages[t.pageId],
+      );
       active.set(t.pageId, {
         pageId: t.pageId,
         attempt,

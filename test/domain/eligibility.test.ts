@@ -1,7 +1,9 @@
 import { test, expect } from "bun:test";
 import {
+  buildResumeContext,
   decideEligibility,
   isNativeResumable,
+  nextDispatchParams,
   resolveResumePlan,
 } from "../../src/domain/eligibility.ts";
 import type { PageState } from "../../src/domain/state.ts";
@@ -217,4 +219,85 @@ test("needs_info: lastEditedTime 未記録なら本文編集では発火しな�
     true,
   );
   expect(answered.eligible).toBe(true);
+});
+
+const donePs = (over: Partial<PageState> = {}): PageState =>
+  ({
+    status: "done",
+    attempt: 3,
+    lastEditedTime: "2026-07-01T00:00:00.000Z",
+    prUrl: "https://github.com/o/r/pull/1",
+    updatedAt: "t",
+    ...over,
+  }) as PageState;
+
+const needsInfoPs = (over: Partial<PageState> = {}): PageState =>
+  ({
+    status: "needs_info",
+    attempt: 1,
+    lastEditedTime: "2026-07-01T00:00:00.000Z",
+    questionAskedAt: "2026-07-02T00:00:00.000Z",
+    question: "A案かB案か",
+    prUrl: "https://github.com/o/r/pull/1",
+    updatedAt: "t",
+    ...over,
+  }) as PageState;
+
+test("buildResumeContext: needs_info_answer + prev=needs_info → questionAskedAt/question を採用", () => {
+  const r = buildResumeContext("needs_info_answer", needsInfoPs());
+  expect(r).toEqual({
+    kind: "needs_info_answer",
+    prUrl: "https://github.com/o/r/pull/1",
+    since: "2026-07-02T00:00:00.000Z",
+    question: "A案かB案か",
+  });
+});
+
+test("buildResumeContext: needs_info_answer + prev!=needs_info → lastEditedTime にフォールバック（question なし）", () => {
+  const r = buildResumeContext("needs_info_answer", donePs());
+  expect(r).toEqual({
+    kind: "needs_info_answer",
+    prUrl: "https://github.com/o/r/pull/1",
+    since: "2026-07-01T00:00:00.000Z",
+  });
+});
+
+test("buildResumeContext: human_rework / ci_failure / review_changes は lastEditedTime を since に、question なし", () => {
+  for (const kind of ["human_rework", "ci_failure", "review_changes"] as const) {
+    expect(buildResumeContext(kind, donePs())).toEqual({
+      kind,
+      prUrl: "https://github.com/o/r/pull/1",
+      since: "2026-07-01T00:00:00.000Z",
+    });
+  }
+});
+
+test("buildResumeContext: prev=undefined でも死なない（全部 undefined になる）", () => {
+  expect(buildResumeContext("human_rework", undefined)).toEqual({
+    kind: "human_rework",
+    prUrl: undefined,
+    since: undefined,
+  });
+});
+
+test("nextDispatchParams: resumeKind なし → attempt = prev.attempt+1、resume=undefined", () => {
+  expect(nextDispatchParams(undefined, donePs({ attempt: 4 }))).toEqual({
+    attempt: 5,
+    resume: undefined,
+  });
+});
+
+test("nextDispatchParams: resumeKind なし + prev なし → attempt=1", () => {
+  expect(nextDispatchParams(undefined, undefined)).toEqual({
+    attempt: 1,
+    resume: undefined,
+  });
+});
+
+test("nextDispatchParams: resumeKind あり → attempt=1 で振り直し、buildResumeContext と一致", () => {
+  const prev = needsInfoPs();
+  expect(nextDispatchParams("needs_info_answer", prev)).toEqual({
+    attempt: 1,
+    resume: buildResumeContext("needs_info_answer", prev),
+  });
 });
