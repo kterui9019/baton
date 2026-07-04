@@ -1,0 +1,59 @@
+{
+  "name": "@kterui9019/baton",
+  "version": "0.1.1",
+  "description": "Kanban-driven local coding agent orchestrator: move a ticket to In Progress and Claude Code implements it, opens a PR, watches CI, and handles reviews.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Kazuki Terui",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kterui9019/baton.git"
+  },
+  "homepage": "https://github.com/kterui9019/baton#readme",
+  "bugs": {
+    "url": "https://github.com/kterui9019/baton/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "coding-agent",
+    "orchestrator",
+    "notion",
+    "kanban",
+    "automation",
+    "ai-agent",
+    "bun",
+    "cli",
+    "github"
+  ],
+  "engines": {
+    "bun": ">=1.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "baton": "./bin/baton.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "prompts",
+    "config.example.json"
+  ],
+  "scripts": {
+    "start": "bun src/main.ts",
+    "once": "bun src/main.ts --once",
+    "dry-run": "bun src/main.ts --once --dry-run",
+    "status": "bun src/main.ts status",
+    "test": "bun test test/",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^24.0.0"
+  },
+  "dependencies": {
+    "ts-pattern": "^5.9.0",
+    "zod": "^4.4.3"
+  }
+}

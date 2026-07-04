@@ -1,0 +1,52 @@
+{
+  "pollIntervalMs": 30000,
+  "maxConcurrent": 2,
+  "repoRoot": "~/repos",
+  "repoMapping": {},
+  "gitRemotePrefix": "git@github.com:your-org/",
+  "autoClone": true,
+  "branchTemplate": "feature/notion-{id}/{slug}",
+  "ghCommand": "gh",
+  "prPollIntervalMs": 60000,
+  "autoReworkLimit": 3,
+  "promptTemplate": "prompts/task.md",
+  "systemPromptTemplate": "",
+  "setupTimeoutMs": 600000,
+  "repoSetup": {
+    "your-repo": {
+      "copy": [".env"],
+      "commands": ["bun install"]
+    }
+  },
+  "kanban": {
+    "provider": "notion",
+    "triggerLanes": ["In Progress"],
+    "doneLane": "Human Review",
+    "mergedLane": "In Delivery",
+    "terminalLanes": ["Released", "Canceled"],
+    "notion": {
+      "dataSourceId": "YOUR_DATA_SOURCE_ID",
+      "laneProperty": "Status",
+      "titleProperty": "Title",
+      "repoProperty": "Repo",
+      "conditionProperty": "Condition",
+      "conditionValue": "Local",
+      "prProperty": "PR",
+      "activityProperty": "Activity",
+      "ntnCommand": "ntn"
+    }
+  },
+  "agent": {
+    "provider": "claude",
+    "timeoutMs": 3600000,
+    "maxAttempts": 2,
+    "claude": {
+      "command": "claude",
+      "args": ["--permission-mode", "bypassPermissions"]
+    },
+    "takt": {
+      "command": "takt",
+      "args": ["--pipeline", "--skip-git", "--quiet"]
+    }
+  }
+}
