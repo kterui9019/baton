@@ -1,9 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   isWithinRoot,
-  mapRepoName,
   renderBranch,
-  repoDirFor,
   shortId,
   slugify,
   worktreePathFor,
@@ -48,25 +46,6 @@ test("renderBranch: {id}/{slug} 置換", () => {
 
 test("renderBranch: 同じ変数が複数回でも全部置換", () => {
   expect(renderBranch("{id}-{slug}-{id}", "aa", "bb")).toBe("aa-bb-aa");
-});
-
-const repoMapping = { "sample-app-legacy": "sample-app-full" };
-
-test("mapRepoName: mapping 適用/未適用", () => {
-  expect(mapRepoName(repoMapping, "sample-app-legacy")).toBe(
-    "sample-app-full",
-  );
-  expect(mapRepoName(repoMapping, "sample-app")).toBe("sample-app");
-});
-
-test("repoDirFor: repoRoot 配下＋mapping", () => {
-  const root = "/home/u/ghq/github.com/kterui9019";
-  expect(repoDirFor(root, repoMapping, "sample-app")).toBe(
-    "/home/u/ghq/github.com/kterui9019/sample-app",
-  );
-  expect(repoDirFor(root, repoMapping, "sample-app-legacy")).toBe(
-    "/home/u/ghq/github.com/kterui9019/sample-app-full",
-  );
 });
 
 test("worktreePathFor: workspaces/<repo>/<id-slug>", () => {

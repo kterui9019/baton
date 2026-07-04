@@ -40,27 +40,6 @@ export function renderBranch(
 }
 
 /**
- * リポジトリ名 → repoMapping 適用後の実名。
- * Config 型そのものではなく必要な値だけを受け取ることで、domain 層が
- * インフラ側の Config 型に依存しないようにしている。
- */
-export function mapRepoName(
-  repoMapping: Record<string, string>,
-  repo: string,
-): string {
-  return repoMapping[repo] ?? repo;
-}
-
-/** リポジトリ名 → ローカルの clone ディレクトリ (絶対パス)。 */
-export function repoDirFor(
-  repoRoot: string,
-  repoMapping: Record<string, string>,
-  repo: string,
-): string {
-  return join(repoRoot, mapRepoName(repoMapping, repo));
-}
-
-/**
  * worktree パス: `<dataHome>/workspaces/<repo名>/<{id}-{slug}>`。
  * repo 名はチケットの表示名（mapping 前）をそのまま層に使う。
  */

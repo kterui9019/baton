@@ -19,6 +19,9 @@ export function extractPrUrl(text: string): string | null {
   return m ? m[0] : null;
 }
 
+/** 対応するコーディングエージェント。 */
+export type AgentProvider = "claude" | "takt" | "opencode" | "grok" | "codex";
+
 /**
  * claude の stdout (stream-json/json) から session_id を抽出する。
  * stream-json は行ごとに session_id を含むため、末尾から走査して最初に見つかったものを採用する。
@@ -36,6 +39,24 @@ export function extractSessionId(stdout: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * 各エージェント CLI ごとの session_id 抽出。
+ * best-effort: 拾えなくても失敗にはならず、`resume` 引数を渡さないだけになる。
+ * claude 以外は出力仕様が確定していないため、JSONL の `session_id` フィールドに加えて
+ * `Session: <id>` / `session_id: <id>` / `session-id: <id>` の正規表現も試す。
+ */
+export function extractSessionIdByProvider(
+  provider: AgentProvider,
+  stdout: string,
+): string | undefined {
+  const jsonl = extractSessionId(stdout);
+  if (jsonl) return jsonl;
+  if (provider === "claude" || provider === "takt") return undefined;
+  const re = /(?:^|\s)(?:session[_-]?id|Session)\s*[:=]\s*([A-Za-z0-9._-]{8,})/;
+  const m = stdout.match(re);
+  return m ? m[1] : undefined;
 }
 
 /**
@@ -109,8 +130,11 @@ export function judgeResult(opts: {
   resultFileText?: string | null;
   exitCode: number | null;
   stdout: string;
+  /** session_id 抽出とエラーメッセージ表記の切替に使う。省略時は claude 相当。 */
+  provider?: AgentProvider;
 }): AgentResult {
-  const sessionId = extractSessionId(opts.stdout);
+  const provider = opts.provider ?? "claude";
+  const sessionId = extractSessionIdByProvider(provider, opts.stdout);
   if (opts.resultFileText) {
     const fromFile = parseResultFile(opts.resultFileText);
     if (fromFile) return { ...fromFile, sessionId };
@@ -120,7 +144,7 @@ export function judgeResult(opts: {
       | { is_error?: boolean }
       | null;
     if (parsed && parsed.is_error === true) {
-      return { status: "failure", reason: "claude が is_error:true を報告", sessionId };
+      return { status: "failure", reason: `${provider} が is_error:true を報告`, sessionId };
     }
     const url = extractPrUrl(opts.stdout);
     if (url) return { status: "success", prUrl: url, sessionId };
@@ -128,7 +152,7 @@ export function judgeResult(opts: {
   }
   return {
     status: "failure",
-    reason: `claude 異常終了 (exit=${opts.exitCode})`,
+    reason: `${provider} 異常終了 (exit=${opts.exitCode})`,
     sessionId,
   };
 }

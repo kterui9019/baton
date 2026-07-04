@@ -65,7 +65,7 @@ function runInit(installRoot: string, dataHome: string): void {
 
   console.log("");
   console.log("次の手順:");
-  console.log(`  1. ${configPath} を編集（kanban.notion.dataSourceId / repoRoot / gitRemotePrefix は必須）`);
+  console.log(`  1. ${configPath} を編集（kanban.notion.dataSourceId / repoConfig.<repo>.localDirPath は必須。事前に git clone しておくこと）`);
   console.log("  2. `baton --once --dry-run` で候補検出と設定を確認");
   console.log("  3. 問題なければ `baton launchd install` で常駐化（macOS）");
 }

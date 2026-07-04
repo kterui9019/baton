@@ -2,14 +2,12 @@ import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   isWithinRoot,
-  mapRepoName,
   renderBranch,
-  repoDirFor,
   worktreePathFor,
 } from "../../domain/workspace.ts";
 import type { WorkspaceInfo } from "../../domain/workspace.ts";
 import { shortId, slugify } from "../../domain/workspace.ts";
-import type { Config } from "../../infrastructure/config.ts";
+import type { Config, RepoConfigEntry } from "../../infrastructure/config.ts";
 import { runCommand } from "../../infrastructure/process-runner.ts";
 import type { CommandRunner } from "../../infrastructure/process-runner.ts";
 import type { Logger } from "../../infrastructure/logger.ts";
@@ -31,26 +29,25 @@ export function createGitWorktreeAdapter(
     return { ok: res.code === 0, stdout: res.stdout, stderr: res.stderr };
   }
 
-  /** リポジトリディレクトリを解決し、無ければ autoClone。失敗で throw。 */
-  async function ensureRepo(repo: string): Promise<string> {
-    const dir = repoDirFor(config.repoRoot, config.repoMapping, repo);
+  /** repoConfig からリポジトリ単位の設定を引く。無ければ分かりやすいエラーで throw。 */
+  function resolveRepoConfig(repo: string): RepoConfigEntry {
+    const entry = config.repoConfig[repo];
+    if (!entry) {
+      throw new Error(
+        `repoConfig に "${repo}" の設定がありません。config.json の repoConfig.${repo} に localDirPath を追加してください。`,
+      );
+    }
+    return entry;
+  }
+
+  /** リポジトリディレクトリを解決する。無ければ throw。 */
+  function ensureRepo(repo: string): string {
+    const entry = resolveRepoConfig(repo);
+    const dir = entry.localDirPath;
     if (existsSync(join(dir, ".git")) || existsSync(dir)) {
       return dir;
     }
-    if (!config.autoClone) {
-      throw new Error(`リポジトリが存在せず autoClone 無効: ${dir}`);
-    }
-    const remote = `${config.gitRemotePrefix}${mapRepoName(
-      config.repoMapping,
-      repo,
-    )}.git`;
-    const res = await run("git", ["clone", remote, dir], {
-      timeoutMs: 600_000,
-    });
-    if (res.code !== 0) {
-      throw new Error(`git clone 失敗 (${remote}): ${res.stderr.trim()}`);
-    }
-    return dir;
+    throw new Error(`リポジトリが存在しません: ${dir}。事前に \`git clone\` しておいてください。`);
   }
 
   /** デフォルトブランチ検出。symbolic-ref → remote show → main の順。 */
@@ -99,10 +96,11 @@ export function createGitWorktreeAdapter(
     title: string,
     repo: string,
   ): Promise<WorkspaceInfo> {
+    const entry = resolveRepoConfig(repo);
     const repoDir = await ensureRepo(repo);
     const id = shortId(pageId);
     const slug = slugify(title);
-    const branch = renderBranch(config.branchTemplate, id, slug);
+    const branch = renderBranch(entry.branchTemplate ?? config.branchTemplate, id, slug);
     const path = worktreePathFor(dataHome, repo, id, slug);
 
     // 安全不変量: worktree パスは必ず workspaces ルート配下。
@@ -140,13 +138,13 @@ export function createGitWorktreeAdapter(
 
   /**
    * worktree 作成後の環境セットアップを行う。
-   *   1. config.repoSetup[repo].copy に列挙されたパスを clone元 → worktree へコピー。
+   *   1. config.repoConfig[repo].setup.copy に列挙されたパスを clone元 → worktree へコピー。
    *      ファイル・ディレクトリ両対応。コピー元が無い / IO 失敗は warn して続行。
-   *   2. config.repoSetup[repo].commands を worktree を cwd に `sh -c` で順次実行。
+   *   2. config.repoConfig[repo].setup.commands を worktree を cwd に `sh -c` で順次実行。
    *      非ゼロ終了は throw。既存 worktree の再利用時 (ws.reused) は commands をスキップ。
    */
   async function setupWorktree(ws: WorkspaceInfo, repo: string): Promise<void> {
-    const setup = config.repoSetup[repo] ?? {};
+    const setup = config.repoConfig[repo]?.setup ?? {};
 
     for (const rel of setup.copy ?? []) {
       const src = join(ws.repoDir, rel);

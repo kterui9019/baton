@@ -10,6 +10,13 @@ export interface RunAgentParams {
   cwd: string;
   logFile: string;
   resultFile: string;
+  /**
+   * 前回実行の session_id。指定時、対応する CLI (opencode/grok/codex 等) は
+   * ネイティブ resume フラグでセッションを引き継ぐ。未指定なら通常起動。
+   * claude/takt 実装は現状これを無視し、プロンプト側の rework セクションで
+   * 継続コンテキストを担う。
+   */
+  sessionId?: string;
 }
 
 /**

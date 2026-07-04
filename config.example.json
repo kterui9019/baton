@@ -1,10 +1,6 @@
 {
   "pollIntervalMs": 30000,
   "maxConcurrent": 2,
-  "repoRoot": "~/repos",
-  "repoMapping": {},
-  "gitRemotePrefix": "git@github.com:your-org/",
-  "autoClone": true,
   "branchTemplate": "feature/notion-{id}/{slug}",
   "ghCommand": "gh",
   "prPollIntervalMs": 60000,
@@ -12,10 +8,13 @@
   "promptTemplate": "prompts/task.md",
   "systemPromptTemplate": "",
   "setupTimeoutMs": 600000,
-  "repoSetup": {
+  "repoConfig": {
     "your-repo": {
-      "copy": [".env"],
-      "commands": ["bun install"]
+      "localDirPath": "~/repos/your-repo",
+      "setup": {
+        "copy": [".env"],
+        "commands": ["bun install"]
+      }
     }
   },
   "kanban": {
@@ -34,6 +33,12 @@
       "prProperty": "PR",
       "activityProperty": "Activity",
       "ntnCommand": "ntn"
+    },
+    "github": {
+      "owner": "your-org",
+      "repos": ["your-repo"],
+      "lanePrefix": "status:",
+      "conditionLabel": ""
     }
   },
   "agent": {
@@ -47,6 +52,18 @@
     "takt": {
       "command": "takt",
       "args": ["--pipeline", "--skip-git", "--quiet"]
+    },
+    "opencode": {
+      "command": "opencode",
+      "args": []
+    },
+    "grok": {
+      "command": "grok",
+      "args": []
+    },
+    "codex": {
+      "command": "codex",
+      "args": []
     }
   }
 }

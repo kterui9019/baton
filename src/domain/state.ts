@@ -41,6 +41,12 @@ interface PageStateCommon {
    * 再ディスパッチ（rework）する。
    */
   lastEditedTime?: string;
+  /**
+   * 直近実行でエージェント CLI が払い出した session_id。
+   * rework/CI 起因の再実行時、対応 CLI（opencode/grok/codex 等）に
+   * ネイティブ resume 引数として渡してセッションを引き継ぐ。
+   */
+  sessionId?: string;
   updatedAt: string;
 }
 

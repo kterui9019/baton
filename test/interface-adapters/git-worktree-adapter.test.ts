@@ -38,7 +38,15 @@ function makeRunner(opts: { shCode?: number } = {}) {
 }
 
 function setupCfg(copy?: string[], commands?: string[]): Config {
-  return { ...DEFAULT_CONFIG, repoSetup: { "some-repo": { copy, commands } } };
+  return {
+    ...DEFAULT_CONFIG,
+    repoConfig: {
+      "some-repo": {
+        localDirPath: "/tmp/some-repo",
+        setup: { copy, commands },
+      },
+    },
+  };
 }
 
 function makeWs(srcFiles: Record<string, string>): {

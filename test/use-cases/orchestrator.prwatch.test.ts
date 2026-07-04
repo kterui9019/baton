@@ -45,8 +45,11 @@ function setup(opts: {
     configPath,
     JSON.stringify({
       prPollIntervalMs: 0,
-      repoRoot: join(root, "repos"),
-      gitRemotePrefix: "git@example.com:org/",
+      repoConfig: {
+        repoX: {
+          localDirPath: join(root, "repos", "repoX"),
+        },
+      },
       ...(opts.config ?? {}),
     }),
   );

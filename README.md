@@ -3,17 +3,17 @@
 [![CI](https://github.com/kterui9019/baton/actions/workflows/ci.yml/badge.svg)](https://github.com/kterui9019/baton/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40kterui9019%2Fbaton)](https://www.npmjs.com/package/@kterui9019/baton)
 
-カンバンデータベース（現在は Notion に対応）をエージェントオーケストレーターとして使い、チケットを **In Progress** レーンに動かすとローカルで Claude Code が走って実装 → PR 作成 → CI 監視 → レビュー対応 → カンバン更新まで自動化する常駐デーモンです。[openai/symphony](https://github.com/openai/symphony/blob/main/SPEC.md) のローカル版。
+カンバン（Notion / GitHub Issues に対応）をエージェントオーケストレーターとして使い、チケットを **In Progress** レーンに動かすとローカルでコーディングエージェント（Claude Code / takt / opencode / grok / codex）が走って実装 → PR 作成 → CI 監視 → レビュー対応 → カンバン更新まで自動化する常駐デーモンです。[openai/symphony](https://github.com/openai/symphony/blob/main/SPEC.md) のローカル版。
 
 ```mermaid
 flowchart LR
-    Kanban["Notion Kanban<br/>(レーン=In Progress)"]
+    Kanban["Kanban<br/>(Notion or GitHub Issues, レーン=In Progress)"]
     Orchestrator["Orchestrator<br/>(Bun/TypeScript)"]
     GitHub["GitHub (gh CLI)<br/>CI/レビュー/マージ監視"]
-    Workspace["Workspace (git worktree)<br/>claude -p &lt;prompt&gt;"]
+    Workspace["Workspace (git worktree)<br/>claude / takt / opencode / grok / codex"]
     PR["PR 作成 (gh)"]
 
-    Kanban <-- "poll (ntn CLI)" --> Orchestrator
+    Kanban <-- "poll (ntn CLI or gh CLI)" --> Orchestrator
     Orchestrator <--> GitHub
     Orchestrator -- dispatch --> Workspace
     Workspace --> PR
@@ -23,11 +23,20 @@ flowchart LR
 
 - **macOS**（常駐化が launchd 前提のため。`baton --once` 等の手動実行なら他 OS でも動作します）
 - **Bun** >= 1.3（`baton` コマンド自体が `#!/usr/bin/env bun` で実行されるため必須。[bun.sh](https://bun.sh) からインストール）
-- **ntn CLI**（[Notion CLI](https://developers.notion.com)。`ntn login` 済みで、対象 DB にアクセスできること）
-- **claude CLI**（Claude Code）
-- **gh CLI**（PR 作成・CI/レビュー監視用。`gh auth login` 済みであること）
+- **カンバンプロバイダー**（`kanban.provider` で選択。いずれか一方でよい）
+  - `notion`: **ntn CLI**（[Notion CLI](https://developers.notion.com)。`ntn login` 済みで、対象 DB にアクセスできること）
+  - `github`: 追加ツール不要（下記 gh CLI のみでよい）。対象リポジトリの Issues を使う
+- **gh CLI**（PR 作成・CI/レビュー監視用、および `kanban.provider: "github"` 時のカンバン操作用。`gh auth login` 済みであること）
+- **コーディングエージェント CLI**（`agent.provider` で選択。使うものだけ入っていればよい）
+  - `claude`: **claude CLI**（Claude Code）
+  - `takt`: [takt](https://github.com/nrslib/takt)
+  - `opencode`: [opencode CLI](https://opencode.ai)
+  - `grok`: [Grok CLI](https://x.ai/cli)（xAI）
+  - `codex`: [Codex CLI](https://developers.openai.com/codex/cli)（OpenAI）
 
-## Notion データベースの準備
+## カンバンの準備
+
+### Notion（`kanban.provider: "notion"`）
 
 以下のプロパティを持つデータベースを用意します。**プロパティ名はすべて config で変更可能**です（下表の「config キー」列）。既定値と同じ名前でプロパティを作れば config の変更は不要です。
 
@@ -43,7 +52,7 @@ flowchart LR
 - Status（status）の選択肢は最低限、`kanban.triggerLanes`（実行トリガー）、`kanban.doneLane`（レビュー待ち）、`kanban.mergedLane`（マージ後）、`kanban.terminalLanes`（終了）に対応するものが必要です。
 - **DB に無いプロパティは config で空文字 `""` を設定すればスキップされます**（例: `"kanban": { "notion": { "prProperty": "" } }` にすると PR リンクの読み書きを一切しない）。必須なのは Title / Status / Repo / Condition の 4 つです。
 
-### dataSourceId の取得
+#### dataSourceId の取得
 
 config に設定する `kanban.notion.dataSourceId` は database_id とは別物です。ntn CLI で database_id（DB ページの URL に含まれる 32 桁の ID）から解決できます:
 
@@ -52,6 +61,33 @@ ntn datasources resolve <database_id>
 ```
 
 ntn を使わない場合は、Notion API の `GET /v1/databases/{database_id}` のレスポンスに含まれる `data_sources` 配列の `id` を参照してください。
+
+### GitHub Issues（`kanban.provider: "github"`）
+
+Notion の代わりに GitHub Issues をカンバンとして使えます。追加のツールは不要で、既存の `gh` CLI（`gh auth login` 済み）のみで動作します。レーン（状態）は **ラベル**で表現します。
+
+```json
+"kanban": {
+  "provider": "github",
+  "triggerLanes": ["In Progress"],
+  "doneLane": "Human Review",
+  "mergedLane": "In Delivery",
+  "terminalLanes": ["Released", "Canceled"],
+  "github": {
+    "owner": "your-org",
+    "repos": ["your-repo"],
+    "lanePrefix": "status:",
+    "conditionLabel": ""
+  }
+}
+```
+
+- **ラベルの用意**: `kanban.github.repos` の各リポジトリに、`lanePrefix` + レーン名（`kanban.triggerLanes` / `doneLane` / `mergedLane` / `terminalLanes` の各値）のラベルを事前に作成してください。既定なら `status:In Progress`、`status:Human Review`、`status:In Delivery`、`status:Released`、`status:Canceled` の 5 つ。
+- **owner / repos**: `owner` はユーザー名または Organization 名。`repos` は `owner` 配下のリポジトリ名のみ（`owner/repo` ではなく `repo` 部分だけ）を配列で指定します。複数リポジトリを跨いだ監視が可能です。
+- **conditionLabel**（任意）: Notion の `Condition` プロパティに相当する追加フィルタ用ラベル。`""`（既定）なら無効で、`triggerLanes` に対応するラベルさえ付いていれば対象になります。誤発火を防ぎたい場合は例えば `"baton"` のような専用ラベルを作って設定してください（そのラベルが付いた issue のみ対象になります）。
+- **pageId 形式**: 内部的に `owner/repo#issue番号`（例: `acme/baton#42`）を使います。`baton status` 等で表示される ID もこの形式です。
+- **書き込み内容**: レーン移動は「既存の `status:*` ラベルを外して新しいレーンのラベルを付ける」形で行われます。PR リンクと実行状況（`Activity` 相当）は issue への**コメント追記**として記録されます（Notion の `prProperty` / `activityProperty` に相当する専用フィールドはありません）。
+- **チケット本文**: issue の本文（body）がそのままプロンプトに使われます。Notion の `Repo` プロパティに相当するものはなく、`repos` に含まれるリポジトリ名がそのまま対象リポジトリ名になります（`repoConfig` のキーと一致させてください）。
 
 ## セットアップ
 
@@ -63,10 +99,13 @@ npm i -g @kterui9019/baton
 baton init
 
 # 2. ~/.config/baton/config.json の必須項目を編集
-#    - kanban.notion.dataSourceId: 上記で取得した ID
-#    - repoRoot: ローカルリポジトリを置く親ディレクトリ（例 ~/repos）
-#    - gitRemotePrefix: clone 元 URL のプレフィックス（例 git@github.com:your-org/）
-#    プロパティ名を既定と変えている場合は kanban.notion.*Property 系も合わせる
+#    - kanban.provider: "notion"（既定）または "github"
+#      - notion: kanban.notion.dataSourceId に上記で取得した ID を設定
+#        （プロパティ名を既定と変えている場合は kanban.notion.*Property 系も合わせる）
+#      - github: kanban.github.owner / repos を設定
+#    - agent.provider: "claude"（既定）/ "takt" / "opencode" / "grok" / "codex"
+#      （使うエージェント CLI がインストール・認証済みであること）
+#    - repoConfig: 対象リポジトリごとに localDirPath（事前に git clone 済みのローカルパス）を設定
 
 # 3. dry-run で候補検出と設定を確認（書き込み・エージェント起動なし）
 baton --once --dry-run
@@ -103,34 +142,39 @@ launchd のラベルは既定で `com.<ユーザー名>.baton`。変えたい場
 
 ## 動作フロー
 
-1. カンバンをポーリング（既定 30 秒間隔）し、`Status ∈ triggerLanes` かつ `Condition = Local` かつ `Repo` 設定済みのチケットを検出
-2. 対象リポジトリ（`repoRoot` 配下、なければ自動 clone）から `workspaces/` に git worktree を作成し、専用ブランチをチェックアウト。`repoSetup` の設定に従い `.env` 等のコピーとセットアップコマンドを実行
-3. チケット本文を含むプロンプトで `claude -p` をヘッドレス起動（同時実行は既定 2 件まで）
+以下は Notion 前提の表現ですが、`kanban.provider: "github"` でも同じ流れです（「レーン」= ラベル、「ページコメント」= issue コメント、「Condition」= `conditionLabel` と読み替え）。
+
+1. カンバンをポーリング（既定 30 秒間隔）し、`Status ∈ triggerLanes`（GitHub なら該当ラベル）かつ `Condition = Local`（GitHub なら `conditionLabel` 設定時のみ）かつ `Repo` 設定済みのチケットを検出
+2. 対象リポジトリ（`repoConfig[repo].localDirPath`。事前に `git clone` 済みであること）から `workspaces/` に git worktree を作成し、専用ブランチをチェックアウト。`repoConfig[repo].setup` の設定に従い `.env` 等のコピーとセットアップコマンドを実行
+3. チケット本文を含むプロンプトで設定したエージェント CLI（`claude -p` / `takt --pipeline` / `opencode run` / `grok -p` / `codex exec` のいずれか）をヘッドレス起動（同時実行は既定 2 件まで）
 4. エージェントが実装・テスト・push・`gh pr create` まで実施し、結果 JSON を報告
 5. **PR 作成後はレーンを動かさず In Progress のまま CI を監視**（`PR` リンク書き込み）
 6. **CI が全部グリーンになったら** レーンを **Human Review** へ移動
 7. レビュー結果に応じて:
    - **(a) GitHub で changes requested** → 指摘内容（レビュー本文 + インラインコメント）を取り込んで**自動で修正**し、同じ PR を更新
-   - **(b) Notion コメントでフィードバックを書いてレーンを In Progress に戻す** → コメントを取り込んでやり直し（rework）。同じブランチ・同じ PR が更新される
+   - **(b) コメントでフィードバックを書いてレーンを In Progress に戻す**（Notion ならページコメント、GitHub なら issue コメント）→ コメントを取り込んでやり直し（rework）。同じブランチ・同じ PR が更新される
    - **(c) PR をマージ** → レーンを **In Delivery** へ自動移動 🚀
 8. CI が失敗した場合も失敗ログを取り込んで自動修正（同一コミットへの再発火はせず、上限は既定 3 回。超えたら 🆘 を通知して人間待ち）
 9. レーンが Released / Canceled になったチケットの worktree は自動掃除
 
-失敗時はバックオフ付きリトライ（既定 2 回まで）。それでもダメなら `Activity` に ❌ とコメントでエラー詳細を残し、カードを人間が編集/移動するまで再実行しません。実行中にカードを In Progress から人間が動かすと、そのエージェントは中断（kill）されます。
+失敗時はバックオフ付きリトライ（既定 2 回まで）。それでもダメなら `Activity`（GitHub なら issue コメント）に ❌ とエラー詳細を残し、カードを人間が編集/移動するまで再実行しません。実行中にカードを In Progress から人間が動かすと、そのエージェントは中断（kill）されます。
+
+opencode / grok / codex は、前回実行の session_id が確認できれば各 CLI のネイティブ resume 機能（`opencode run --session` / `grok --session-id` / `codex exec resume`）でセッションを引き継いで rework します（session_id が拾えない場合は通常起動にフォールバックします）。
 
 ### 質問エスカレーション（needs_info）
 
 要件が曖昧・判断が必要など「人間の回答があれば続行できる」場合、エージェントは失敗ではなく**質問**を報告します:
 
-1. レーンは動かさず、`Activity` に **❓ 要回答**、質問をページコメントとして投稿
-2. 人間がそのコメントに返信（またはページにコメント追加、またはページ本文を編集）
+1. レーンは動かさず、`Activity`（GitHub なら issue コメント）に **❓ 要回答**、質問をコメントとして投稿
+2. 人間がそのコメントに返信（またはページ/issue にコメント追加、またはページ本文/issue 本文を編集）
 3. 次のポーリングで回答を検知し、質問と回答をプロンプトに含めて**自動で再開**
 
 ## チケットの書き方
 
 - **Title** と本文に実装内容を書く。本文はそのままプロンプトに入ります
-- **Repo** と **Condition = Local** を設定
-- **In Progress** に動かすと数十秒以内に着手されます
+- **Notion**: **Repo** と **Condition = Local** を設定し、**In Progress** に動かす
+- **GitHub Issues**: 対象リポジトリの issue に `status:In Progress` ラベル（`conditionLabel` 設定時はそちらも）を付ける
+- 動かすと数十秒以内に着手されます
 - 失敗後にやり直したいときは、カードを一度別レーンに出して戻す（またはカードを編集する）と再実行されます
 
 ## 設定リファレンス（config.json）
@@ -145,13 +189,9 @@ launchd のラベルは既定で `com.<ユーザー名>.baton`。変えたい場
 |---|---|---|---|
 | `pollIntervalMs` | number | `30000` | カンバンのポーリング間隔 (ms) |
 | `maxConcurrent` | number | `2` | 同時実行エージェント数 |
-| `repoRoot` | string | `"~/repos"` | ローカルリポジトリの親ディレクトリ |
-| `repoMapping` | object | `{}` | カンバンのリポジトリ名 → ローカルディレクトリ名の対応（名前が食い違う場合） |
-| `gitRemotePrefix` | string | `""` | 自動 clone に使う URL プレフィックス（例 `git@github.com:your-org/`）。`autoClone: true` なら必須 |
-| `autoClone` | boolean | `true` | リポジトリが無いとき `<gitRemotePrefix><名前>.git` を自動 clone する |
-| `branchTemplate` | string | `"feature/notion-{id}/{slug}"` | 作業ブランチ名。`{id}` = page_id 先頭 8 文字、`{slug}` = タイトルの slug |
+| `branchTemplate` | string | `"feature/notion-{id}/{slug}"` | 作業ブランチ名のグローバルデフォルト。`{id}` = page_id 先頭 8 文字、`{slug}` = タイトルの slug。`repoConfig[repo].branchTemplate` で repo 単位に上書き可能 |
 | `setupTimeoutMs` | number | `600000` | セットアップコマンド 1 本あたりの最大実行時間（10 分） |
-| `repoSetup` | object | `{}` | リポジトリ別の worktree セットアップ（下記） |
+| `repoConfig` | object | `{}` | リポジトリ単位の設定（clone 元・ローカルパス・worktree セットアップ。下記） |
 | `ghCommand` | string | `"gh"` | gh CLI のコマンド名（PR 監視用） |
 | `prPollIntervalMs` | number | `60000` | PR 監視（CI/レビュー/マージ）のポーリング間隔 (ms) |
 | `autoReworkLimit` | number | `3` | CI 失敗起因の自動修正回数の上限 |
@@ -162,13 +202,13 @@ launchd のラベルは既定で `com.<ユーザー名>.baton`。変えたい場
 
 | キー | 型 | 既定値 | 説明 |
 |---|---|---|---|
-| `kanban.provider` | `"notion"` | `"notion"` | 現在有効なカンバン実装 |
+| `kanban.provider` | `"notion" \| "github"` | `"notion"` | 現在有効なカンバン実装 |
 | `kanban.triggerLanes` | string[] | `["In Progress"]` | このレーンのチケットを実行対象にする |
 | `kanban.doneLane` | string | `"Human Review"` | CI グリーン後の移動先レーン |
 | `kanban.mergedLane` | string | `"In Delivery"` | PR マージ検知時の移動先レーン |
 | `kanban.terminalLanes` | string[] | `["Released", "Canceled"]` | このレーンに入ったら worktree と state を掃除 |
 
-#### kanban.notion（Notion 固有）
+#### kanban.notion（Notion 固有、`provider: "notion"` 時のみ使用）
 
 | キー | 型 | 既定値 | 説明 |
 |---|---|---|---|
@@ -182,11 +222,20 @@ launchd のラベルは既定で `com.<ユーザー名>.baton`。変えたい場
 | `kanban.notion.activityProperty` | string | `"Activity"` | アクティビティプロパティ名 (rich_text)。`""` でスキップ |
 | `kanban.notion.ntnCommand` | string | `"ntn"` | ntn CLI のコマンド名 |
 
+#### kanban.github（GitHub Issues 固有、`provider: "github"` 時のみ使用）
+
+| キー | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `kanban.github.owner` | string | `""` | **必須**。対象リポジトリのオーナー（ユーザー名 or Organization 名） |
+| `kanban.github.repos` | string[] | `[]` | **必須**。対象リポジトリ名の配列（`owner` 配下の名前のみ、`owner/repo` ではない） |
+| `kanban.github.lanePrefix` | string | `"status:"` | レーンを表すラベルのプレフィックス。lane 名は `<lanePrefix><レーン名>` の形のラベルで表現する |
+| `kanban.github.conditionLabel` | string | `""` | 追加フィルタ用ラベル（Notion の `conditionProperty`/`conditionValue` 相当）。`""` なら無効（`triggerLanes` のラベルのみで判定） |
+
 ### agent（コーディングエージェント）
 
 | キー | 型 | 既定値 | 説明 |
 |---|---|---|---|
-| `agent.provider` | `"claude" \| "takt"` | `"claude"` | 現在有効なエージェント実装 |
+| `agent.provider` | `"claude" \| "takt" \| "opencode" \| "grok" \| "codex"` | `"claude"` | 現在有効なエージェント実装 |
 | `agent.timeoutMs` | number | `3600000` | 1 試行の最大実行時間（60 分） |
 | `agent.maxAttempts` | number | `2` | 最大試行回数（バックオフ付きリトライ） |
 
@@ -206,20 +255,54 @@ launchd のラベルは既定で `com.<ユーザー名>.baton`。変えたい場
 | `agent.takt.command` | string | `"takt"` | takt CLI のコマンド名 |
 | `agent.takt.args` | string[] | `["--pipeline", "--skip-git", "--quiet"]` | takt CLI への追加引数（`--task <prompt>` は自動付与） |
 
-`repoSetup` の例（gitignore された `.env` を持ち込み、依存をインストール）:
+#### agent.opencode（[opencode](https://opencode.ai) 固有）
+
+`provider: "opencode"` のとき、`opencode run [--session <id>] <args> <prompt>` をヘッドレス起動します。プロンプトは引数の末尾に渡されます（stdin ではない）。前回実行の session_id が拾えていれば `--session` で resume します。
+
+| キー | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `agent.opencode.command` | string | `"opencode"` | opencode CLI のコマンド名 |
+| `agent.opencode.args` | string[] | `[]` | opencode CLI への追加引数（`run` と `--session`/prompt は自動付与） |
+
+#### agent.grok（[Grok CLI](https://x.ai/cli) 固有）
+
+`provider: "grok"` のとき、`grok [--session-id <id>] <args> -p <prompt>` をヘッドレス起動します。前回実行の session_id が拾えていれば `--session-id` で resume します。
+
+| キー | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `agent.grok.command` | string | `"grok"` | grok CLI のコマンド名 |
+| `agent.grok.args` | string[] | `[]` | grok CLI への追加引数（`--session-id`/`-p <prompt>` は自動付与） |
+
+#### agent.codex（[Codex CLI](https://developers.openai.com/codex/cli) 固有）
+
+`provider: "codex"` のとき、`codex exec <args> <prompt>` をヘッドレス起動します。前回実行の session_id が拾えていれば `codex exec resume <id> <args> <prompt>` の形で resume します。
+
+| キー | 型 | 既定値 | 説明 |
+|---|---|---|---|
+| `agent.codex.command` | string | `"codex"` | codex CLI のコマンド名 |
+| `agent.codex.args` | string[] | `[]` | codex CLI への追加引数（`exec`/`resume <id>`/prompt は自動付与） |
+
+opencode / grok / codex の session_id 抽出は best-effort です（stdout から `session_id` フィールドや `session: <id>` 形式を正規表現で探索）。拾えなくても失敗にはならず、単に resume 引数なしの通常起動になります。
+
+`repoConfig` の例（gitignore された `.env` を持ち込み、依存をインストール）:
 
 ```json
-"repoSetup": {
+"repoConfig": {
   "your-repo": {
-    "copy": [".env", "packages/api/.env"],
-    "commands": ["bun install"]
+    "localDirPath": "~/repos/your-repo",
+    "setup": {
+      "copy": [".env", "packages/api/.env"],
+      "commands": ["bun install"]
+    }
   }
 }
 ```
 
-- キーは Notion の **Repo** プロパティに設定した名前。
-- `copy` は clone 元（`repoRoot` 配下の実リポジトリ）基準の相対パスの列挙。ファイル・ディレクトリ両対応（ディレクトリは再帰コピー）。worktree の外へは書き込めない。存在しないパスは警告を出してスキップ。
-- `commands` は worktree をカレントに `sh -c` で順次実行。**非ゼロ終了はセットアップ失敗**としてリトライ対象になる。既存 worktree の再利用時はスキップされる。
+- キーは Notion の **Repo** プロパティに設定した名前（GitHub provider なら `kanban.github.repos` の要素）。
+- `localDirPath` は必須。**事前に `git clone` 済みであること**。無ければエラーで停止する。
+- `branchTemplate`（省略可）でトップレベルの `branchTemplate` を repo 単位に上書きできる。
+- `setup.copy` は clone 元（`localDirPath` の実リポジトリ）基準の相対パスの列挙。ファイル・ディレクトリ両対応（ディレクトリは再帰コピー）。worktree の外へは書き込めない。存在しないパスは警告を出してスキップ。
+- `setup.commands` は worktree をカレントに `sh -c` で順次実行。**非ゼロ終了はセットアップ失敗**としてリトライ対象になる。既存 worktree の再利用時はスキップされる。
 
 ### システムプロンプトの追加（systemPromptTemplate）
 
@@ -251,7 +334,7 @@ launchd のラベルは既定で `com.<ユーザー名>.baton`。変えたい場
 
 ### トラブルシューティング
 
-- **起動時に設定エラーで終了する**: `kanban.notion.dataSourceId` / `repoRoot` / `gitRemotePrefix` の必須チェックです。表示されたメッセージに従って config.json を修正してください
+- **起動時に設定エラーで終了する**: `kanban.notion.dataSourceId` / `repoConfig.<repo>.localDirPath` の必須チェックです。表示されたメッセージに従って config.json を修正してください
 - **チケットが拾われない**: `baton --once --dry-run` で候補と除外理由を確認。`Condition` が空になっていないか、レーン名・プロパティ名が config と一致しているか
 - **一度失敗したチケットが再実行されない**: 仕様です。カードを編集するか動かし直してください（`~/.config/baton/state/state.json` の該当エントリを消しても可）
 - **❓ 要回答 のまま進まない**: 質問コメントに**返信**するかページに新規コメント/本文編集をしてください。bot 自身のコメントは回答と見なされません
@@ -270,9 +353,12 @@ src/
     prompt-builder.ts    エージェントへのプロンプト組み立て
   interface-adapters/
     notion/              KanbanPort の Notion 実装（ntn CLI）
+    github/               KanbanPort の GitHub Issues 実装 / CodeHostPort の GitHub 実装（gh CLI）
     claude/              CodingAgentPort の Claude Code 実装
     takt/                 CodingAgentPort の takt 実装
-    github/               CodeHostPort の GitHub 実装（gh CLI）
+    opencode/             CodingAgentPort の opencode 実装
+    grok/                 CodingAgentPort の grok 実装
+    codex/                CodingAgentPort の codex 実装
     git/                  WorkspacePort の git worktree 実装
     persistence/          StateRepositoryPort の JSON ファイル実装
   infrastructure/        config・logger・プロセス実行・launchd など横断的関心事

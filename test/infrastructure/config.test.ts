@@ -44,13 +44,15 @@ test("loadConfig: 部分指定 + ~ 展開", () => {
     p,
     JSON.stringify({
       maxConcurrent: 3,
-      repoRoot: "~/repos",
+      repoConfig: {
+        "some-repo": { localDirPath: "~/repos/some-repo" },
+      },
       agent: { maxAttempts: 4 },
     }),
   );
   const cfg = loadConfig(p);
   expect(cfg.maxConcurrent).toBe(3);
-  expect(cfg.repoRoot).toBe(join(homedir(), "repos"));
+  expect(cfg.repoConfig["some-repo"]?.localDirPath).toBe(join(homedir(), "repos", "some-repo"));
   expect(cfg.agent.maxAttempts).toBe(4);
   expect(cfg.agent.claude.command).toBe("claude");
   expect(cfg.kanban.notion.dataSourceId).toBe(DEFAULT_CONFIG.kanban.notion.dataSourceId);
@@ -80,8 +82,7 @@ test("DEFAULT_CONFIG: provider のデフォルトと組織固有デフォルト�
   expect(DEFAULT_CONFIG.kanban.provider).toBe("notion");
   expect(DEFAULT_CONFIG.agent.provider).toBe("claude");
   expect(DEFAULT_CONFIG.kanban.notion.dataSourceId).toBe("");
-  expect(DEFAULT_CONFIG.repoRoot).toBe("~/repos");
-  expect(DEFAULT_CONFIG.gitRemotePrefix).toBe("");
+  expect(DEFAULT_CONFIG.repoConfig).toEqual({});
 });
 
 const validConfig = {
@@ -93,7 +94,11 @@ const validConfig = {
       dataSourceId: "7c71f420-0760-46b8-b9f5-d033c6b7c358",
     },
   },
-  gitRemotePrefix: "git@github.com:your-org/",
+  repoConfig: {
+    "your-repo": {
+      localDirPath: "~/repos/your-repo",
+    },
+  },
 };
 
 test("validateConfig: 必須設定が揃っていれば空配列", () => {
@@ -109,31 +114,93 @@ test("validateConfig: dataSourceId 空はエラー（取得方法のヒント付
   expect(errors[0]).toContain("dataSourceId");
 });
 
-test("validateConfig: repoRoot 空はエラー", () => {
-  const errors = validateConfig({ ...validConfig, repoRoot: "" });
+test("validateConfig: repoConfig.<repo>.localDirPath 空はエラー", () => {
+  const errors = validateConfig({
+    ...validConfig,
+    repoConfig: { "your-repo": { ...validConfig.repoConfig["your-repo"]!, localDirPath: "" } },
+  });
   expect(errors.length).toBe(1);
-  expect(errors[0]).toContain("repoRoot");
+  expect(errors[0]).toContain("repoConfig.your-repo.localDirPath");
 });
 
-test("validateConfig: gitRemotePrefix 空 + autoClone: true はエラー", () => {
-  const errors = validateConfig({ ...validConfig, gitRemotePrefix: "" });
-  expect(errors.length).toBe(1);
-  expect(errors[0]).toContain("gitRemotePrefix");
-  expect(errors[0]).toContain("autoClone");
-});
-
-test("validateConfig: gitRemotePrefix 空でも autoClone: false なら OK", () => {
-  expect(
-    validateConfig({ ...validConfig, gitRemotePrefix: "", autoClone: false }),
-  ).toEqual([]);
+test("validateConfig: repoConfig が空でもエラーにならない", () => {
+  expect(validateConfig({ ...validConfig, repoConfig: {} })).toEqual([]);
 });
 
 test("validateConfig: 複数エラーは全件返す", () => {
   const errors = validateConfig({
     ...validConfig,
     kanban: { ...validConfig.kanban, notion: { ...validConfig.kanban.notion, dataSourceId: "" } },
-    repoRoot: "",
-    gitRemotePrefix: "",
+    repoConfig: { "your-repo": { localDirPath: "" } },
   });
-  expect(errors.length).toBe(3);
+  expect(errors.length).toBe(2);
+});
+
+test("DEFAULT_CONFIG: GitHub kanban / 新 agent プロバイダのデフォルト値", () => {
+  expect(DEFAULT_CONFIG.kanban.github.lanePrefix).toBe("status:");
+  expect(DEFAULT_CONFIG.kanban.github.conditionLabel).toBe("");
+  expect(DEFAULT_CONFIG.kanban.github.owner).toBe("");
+  expect(DEFAULT_CONFIG.kanban.github.repos).toEqual([]);
+  expect(DEFAULT_CONFIG.agent.opencode.command).toBe("opencode");
+  expect(DEFAULT_CONFIG.agent.grok.command).toBe("grok");
+  expect(DEFAULT_CONFIG.agent.codex.command).toBe("codex");
+});
+
+const validGithubConfig = {
+  ...DEFAULT_CONFIG,
+  kanban: {
+    ...DEFAULT_CONFIG.kanban,
+    provider: "github" as const,
+    github: {
+      ...DEFAULT_CONFIG.kanban.github,
+      owner: "acme",
+      repos: ["baton"],
+    },
+  },
+  repoConfig: {
+    baton: {
+      localDirPath: "~/repos/baton",
+    },
+  },
+};
+
+test("validateConfig(github): owner/repos 揃えば空", () => {
+  expect(validateConfig(validGithubConfig)).toEqual([]);
+});
+
+test("validateConfig(github): owner 空はエラー", () => {
+  const errors = validateConfig({
+    ...validGithubConfig,
+    kanban: {
+      ...validGithubConfig.kanban,
+      github: { ...validGithubConfig.kanban.github, owner: "" },
+    },
+  });
+  expect(errors.length).toBe(1);
+  expect(errors[0]).toContain("kanban.github.owner");
+});
+
+test("validateConfig(github): repos 空はエラー", () => {
+  const errors = validateConfig({
+    ...validGithubConfig,
+    kanban: {
+      ...validGithubConfig.kanban,
+      github: { ...validGithubConfig.kanban.github, repos: [] },
+    },
+  });
+  expect(errors.length).toBe(1);
+  expect(errors[0]).toContain("kanban.github.repos");
+});
+
+test("validateConfig(github): notion 側の dataSourceId 未設定は影響しない", () => {
+  // provider が github のとき notion.dataSourceId 空でもエラーにならない
+  expect(
+    validateConfig({
+      ...validGithubConfig,
+      kanban: {
+        ...validGithubConfig.kanban,
+        notion: { ...validGithubConfig.kanban.notion, dataSourceId: "" },
+      },
+    }),
+  ).toEqual([]);
 });

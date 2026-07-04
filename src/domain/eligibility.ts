@@ -5,7 +5,8 @@ import type { Ticket } from "./ticket.ts";
 /** decideEligibility が必要とする設定値のみを narrow に受け取る（Config 全体には依存しない）。 */
 export interface EligibilityConfig {
   triggerLanes: string[];
-  conditionValue: string;
+  /** null は「condition チェックなし」（例: GitHub provider は Ticket.condition が常に null）。 */
+  conditionValue: string | null;
 }
 
 export interface EligibilityDecision {

@@ -12,9 +12,8 @@ import { decidePrWatchAction } from "../domain/review.ts";
 import { rearmPrWatch } from "../domain/state.ts";
 import type { PageState, PrWatchState, StateFile } from "../domain/state.ts";
 import type { CommentInfo, KanbanPageSnapshot, Ticket } from "../domain/ticket.ts";
-import { repoDirFor } from "../domain/workspace.ts";
 import type { WorkspaceInfo } from "../domain/workspace.ts";
-import type { Config, ConfigManager } from "../infrastructure/config.ts";
+import type { AgentProvider, Config, ConfigManager } from "../infrastructure/config.ts";
 import { validateConfig } from "../infrastructure/config.ts";
 import { hhmm, nowIso, oneLine, sleep, tail } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
@@ -48,6 +47,14 @@ export interface OrchestratorHandle {
   getState: () => StateFile;
   setState: (state: StateFile) => void;
 }
+
+const AGENT_LABELS: Record<AgentProvider, string> = {
+  claude: "Claude Code",
+  takt: "takt",
+  opencode: "opencode",
+  grok: "Grok",
+  codex: "Codex",
+};
 
 interface ActiveEntry {
   pageId: string;
@@ -289,9 +296,13 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
 
   function eligibility(t: Ticket, needsInfoAnswered?: boolean): EligibilityDecision {
     const c = cfg();
+    // GitHub provider は condition フィルタを queryCandidates の --label で消化済みで
+    // Ticket.condition は常に null（github-kanban-adapter.ts 参照）のため、
+    // conditionValue も null にして常に一致させる（Notion 用の "Local" と比較しない）。
+    const conditionValue = c.kanban.provider === "github" ? null : c.kanban.notion.conditionValue;
     return decideEligibility({
       ticket: t,
-      cfg: { triggerLanes: c.kanban.triggerLanes, conditionValue: c.kanban.notion.conditionValue },
+      cfg: { triggerLanes: c.kanban.triggerLanes, conditionValue },
       isActive: active.has(t.pageId),
       ps: state.pages[t.pageId],
       needsInfoAnswered,
@@ -385,7 +396,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       : "実行";
     await safeKanban("claim_update", ticket.pageId, (k) =>
       k.updateTicket(ticket.pageId, {
-        activity: `🤖 Claude Code ${startVerb}開始 (attempt ${attempt}) — ${hhmm()}`,
+        activity: `🤖 ${AGENT_LABELS[c.agent.provider]} ${startVerb}開始 (attempt ${attempt}) — ${hhmm()}`,
       }),
     );
 
@@ -433,7 +444,15 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     const systemPrompt = renderSystemPrompt(promptVars);
 
     log.info("agent_start", { page_id: ticket.pageId, msg: `cwd=${ws.path}` });
-    const handle = agent().start({ config: c, prompt, systemPrompt, cwd: ws.path, logFile, resultFile });
+    const handle = agent().start({
+      config: c,
+      prompt,
+      systemPrompt,
+      cwd: ws.path,
+      logFile,
+      resultFile,
+      sessionId: prevPs?.sessionId,
+    });
     entry.phase = "running";
     entry.handle = handle;
 
@@ -446,7 +465,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       });
       result = agent().evaluateResult(resultFile, run.code, run.stdout);
     } catch (err) {
-      await onFailure(ticket, attempt, `claude 起動失敗: ${oneLine(String(err))}`, logFile);
+      await onFailure(ticket, attempt, `${c.agent.provider} 起動失敗: ${oneLine(String(err))}`, logFile);
       active.delete(ticket.pageId);
       return;
     }
@@ -554,6 +573,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       repoDir: ws.repoDir,
       prUrl,
       prWatch: prUrl ? rearmPrWatch(prevWatch, prUrl, resume?.kind === "ci_failure") : undefined,
+      sessionId: sessionId ?? state.pages[ticket.pageId]?.sessionId,
       updatedAt: nowIso(),
     };
     persist();
@@ -599,6 +619,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       prWatch: prev?.prWatch,
       questionAskedAt,
       question,
+      sessionId: sessionId ?? prev?.sessionId,
       updatedAt: nowIso(),
     };
     persist();
@@ -673,6 +694,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
         status: "retry_queued",
         attempt,
         retryAt: Date.now() + delay,
+        sessionId: sessionId ?? prev?.sessionId,
         updatedAt: nowIso(),
       };
       persist();
@@ -694,6 +716,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       status: "failed",
       attempt,
       lastEditedTime: ticket.lastEditedTime,
+      sessionId: sessionId ?? prev?.sessionId,
       updatedAt: nowIso(),
     };
     persist();
@@ -791,7 +814,7 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
         const repoDir =
           ps.repoDir ??
           (snapshot.ticket.repo
-            ? repoDirFor(c.repoRoot, c.repoMapping, snapshot.ticket.repo)
+            ? c.repoConfig[snapshot.ticket.repo]?.localDirPath
             : undefined);
         try {
           if (repoDir) {

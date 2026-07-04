@@ -12,12 +12,32 @@ export interface TaktAgentConfig {
   args: string[];
 }
 
+export interface OpencodeAgentConfig {
+  command: string;
+  args: string[];
+}
+
+export interface GrokAgentConfig {
+  command: string;
+  args: string[];
+}
+
+export interface CodexAgentConfig {
+  command: string;
+  args: string[];
+}
+
+export type AgentProvider = "claude" | "takt" | "opencode" | "grok" | "codex";
+
 export interface AgentConfig {
-  provider: "claude" | "takt";
+  provider: AgentProvider;
   timeoutMs: number;
   maxAttempts: number;
   claude: ClaudeAgentConfig;
   takt: TaktAgentConfig;
+  opencode: OpencodeAgentConfig;
+  grok: GrokAgentConfig;
+  codex: CodexAgentConfig;
 }
 
 export interface NotionKanbanConfig {
@@ -34,18 +54,39 @@ export interface NotionKanbanConfig {
   ntnCommand: string;
 }
 
+/**
+ * GitHub Issues をカンバンとして扱う設定。lane はラベル
+ * （`<lanePrefix><lane>` 形式、例: `status:In Progress`）で表現する。
+ */
+export interface GitHubKanbanConfig {
+  /** 対象リポジトリのオーナー（個人 or org）。 */
+  owner: string;
+  /** 対象リポジトリ名の配列（owner 配下の <name> のみ、`owner/name` ではない）。 */
+  repos: string[];
+  /** lane ラベルのプレフィックス（デフォルト `status:`）。lane 名は「プレフィックス + triggerLanes/doneLane の値」で組み立てる。 */
+  lanePrefix: string;
+  /**
+   * 追加フィルタ用ラベル（Notion の Condition プロパティ相当）。
+   * "" なら無効（trigger lane のみで判定）、指定時はこのラベルが付いた issue のみ対象。
+   */
+  conditionLabel: string;
+}
+
+export type KanbanProvider = "notion" | "github";
+
 export interface KanbanConfig {
-  provider: "notion";
+  provider: KanbanProvider;
   triggerLanes: string[];
   doneLane: string;
   /** PR マージ検知時に移動するレーン。 */
   mergedLane: string;
   terminalLanes: string[];
   notion: NotionKanbanConfig;
+  github: GitHubKanbanConfig;
 }
 
 /** リポジトリ別の worktree セットアップ設定。 */
-export interface RepoSetup {
+export interface RepoSetupConfig {
   /**
    * clone元 → worktree へコピーするパス（clone元ルート基準の相対パス）。
    * gitignore された `.env` や `.claude` などを持ち込むのに使う。
@@ -56,18 +97,28 @@ export interface RepoSetup {
   commands?: string[];
 }
 
+/**
+ * リポジトリ単位の設定。「どこに置くか」「どうセットアップするか」を
+ * 1つのオブジェクトにまとめる（kanban のプロバイダーに依存しない）。
+ */
+export interface RepoConfigEntry {
+  /** ローカルの git リポジトリのディレクトリ（絶対パス、`~` 展開可）。 */
+  localDirPath: string;
+  /** 作業ブランチ名テンプレート。省略時はトップレベルの branchTemplate にフォールバック。 */
+  branchTemplate?: string;
+  /** worktree セットアップ（.env コピー・依存インストール等）。 */
+  setup?: RepoSetupConfig;
+}
+
 export interface Config {
   pollIntervalMs: number;
   maxConcurrent: number;
-  repoRoot: string;
-  repoMapping: Record<string, string>;
-  gitRemotePrefix: string;
-  autoClone: boolean;
+  /** 作業ブランチ名テンプレートのグローバルデフォルト。repoConfig[repo].branchTemplate で上書き可能。 */
   branchTemplate: string;
   /** worktree セットアップコマンドのタイムアウト (ms)。 */
   setupTimeoutMs: number;
-  /** リポジトリ名（カンバン側の表示名）→ セットアップ設定。 */
-  repoSetup: Record<string, RepoSetup>;
+  /** リポジトリ名（カンバン側の表示名）→ リポジトリ単位の設定。 */
+  repoConfig: Record<string, RepoConfigEntry>;
   /** gh CLI コマンド名（PR 監視用）。 */
   ghCommand: string;
   /** PR 監視（CI/レビュー/マージ）のポーリング間隔 (ms)。 */
@@ -93,13 +144,9 @@ export interface Config {
 export const DEFAULT_CONFIG: Config = {
   pollIntervalMs: 30_000,
   maxConcurrent: 2,
-  repoRoot: "~/repos",
-  repoMapping: {},
-  gitRemotePrefix: "",
-  autoClone: true,
   branchTemplate: "feature/notion-{id}/{slug}",
   setupTimeoutMs: 600_000,
-  repoSetup: {},
+  repoConfig: {},
   ghCommand: "gh",
   prPollIntervalMs: 60_000,
   autoReworkLimit: 3,
@@ -122,6 +169,12 @@ export const DEFAULT_CONFIG: Config = {
       prProperty: "PR",
       activityProperty: "Activity",
     },
+    github: {
+      owner: "",
+      repos: [],
+      lanePrefix: "status:",
+      conditionLabel: "",
+    },
   },
   agent: {
     provider: "claude",
@@ -135,6 +188,18 @@ export const DEFAULT_CONFIG: Config = {
       command: "takt",
       args: ["--pipeline", "--skip-git", "--quiet"],
     },
+    opencode: {
+      command: "opencode",
+      args: [],
+    },
+    grok: {
+      command: "grok",
+      args: [],
+    },
+    codex: {
+      command: "codex",
+      args: [],
+    },
   },
 };
 
@@ -143,22 +208,20 @@ export const DEFAULT_CONFIG: Config = {
  * 外部ファイルという境界のパースにのみ zod を使い、型が合っていれば通す
  * （値の意味的妥当性は validateConfig が別途チェックする）。
  */
-const ClaudeAgentConfigInputSchema = z.object({
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
-});
-
-const TaktAgentConfigInputSchema = z.object({
+const AgentCliConfigInputSchema = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
 });
 
 const AgentConfigInputSchema = z.object({
-  provider: z.enum(["claude", "takt"]).optional(),
+  provider: z.enum(["claude", "takt", "opencode", "grok", "codex"]).optional(),
   timeoutMs: z.number().optional(),
   maxAttempts: z.number().optional(),
-  claude: ClaudeAgentConfigInputSchema.optional(),
-  takt: TaktAgentConfigInputSchema.optional(),
+  claude: AgentCliConfigInputSchema.optional(),
+  takt: AgentCliConfigInputSchema.optional(),
+  opencode: AgentCliConfigInputSchema.optional(),
+  grok: AgentCliConfigInputSchema.optional(),
+  codex: AgentCliConfigInputSchema.optional(),
 });
 
 const NotionKanbanConfigInputSchema = z.object({
@@ -173,30 +236,40 @@ const NotionKanbanConfigInputSchema = z.object({
   ntnCommand: z.string().optional(),
 });
 
+const GitHubKanbanConfigInputSchema = z.object({
+  owner: z.string().optional(),
+  repos: z.array(z.string()).optional(),
+  lanePrefix: z.string().optional(),
+  conditionLabel: z.string().optional(),
+});
+
 const KanbanConfigInputSchema = z.object({
-  provider: z.literal("notion").optional(),
+  provider: z.enum(["notion", "github"]).optional(),
   triggerLanes: z.array(z.string()).optional(),
   doneLane: z.string().optional(),
   mergedLane: z.string().optional(),
   terminalLanes: z.array(z.string()).optional(),
   notion: NotionKanbanConfigInputSchema.optional(),
+  github: GitHubKanbanConfigInputSchema.optional(),
 });
 
-const RepoSetupInputSchema = z.object({
+const RepoSetupConfigInputSchema = z.object({
   copy: z.array(z.string()).optional(),
   commands: z.array(z.string()).optional(),
+});
+
+const RepoConfigEntryInputSchema = z.object({
+  localDirPath: z.string().optional(),
+  branchTemplate: z.string().optional(),
+  setup: RepoSetupConfigInputSchema.optional(),
 });
 
 const ConfigInputSchema = z.object({
   pollIntervalMs: z.number().optional(),
   maxConcurrent: z.number().optional(),
-  repoRoot: z.string().optional(),
-  repoMapping: z.record(z.string(), z.string()).optional(),
-  gitRemotePrefix: z.string().optional(),
-  autoClone: z.boolean().optional(),
   branchTemplate: z.string().optional(),
   setupTimeoutMs: z.number().optional(),
-  repoSetup: z.record(z.string(), RepoSetupInputSchema).optional(),
+  repoConfig: z.record(z.string(), RepoConfigEntryInputSchema).optional(),
   ghCommand: z.string().optional(),
   prPollIntervalMs: z.number().optional(),
   autoReworkLimit: z.number().optional(),
@@ -213,22 +286,31 @@ const ConfigInputSchema = z.object({
  */
 export function validateConfig(cfg: Config): string[] {
   const errors: string[] = [];
-  if (cfg.kanban.notion.dataSourceId === "") {
-    errors.push(
-      "kanban.notion.dataSourceId が未設定です。`ntn datasources resolve <database_id>` で " +
-        "data_source_id を取得して config.json に設定してください。",
-    );
+  if (cfg.kanban.provider === "notion") {
+    if (cfg.kanban.notion.dataSourceId === "") {
+      errors.push(
+        "kanban.notion.dataSourceId が未設定です。`ntn datasources resolve <database_id>` で " +
+          "data_source_id を取得して config.json に設定してください。",
+      );
+    }
+  } else if (cfg.kanban.provider === "github") {
+    if (cfg.kanban.github.owner === "") {
+      errors.push(
+        "kanban.github.owner が未設定です。対象リポジトリのオーナー（個人 or org 名）を config.json に設定してください。",
+      );
+    }
+    if (cfg.kanban.github.repos.length === 0) {
+      errors.push(
+        "kanban.github.repos が空です。対象リポジトリ名の配列（owner 配下の name のみ、`owner/name` ではない）を config.json に設定してください。",
+      );
+    }
   }
-  if (cfg.repoRoot === "") {
-    errors.push(
-      "repoRoot が未設定です。リポジトリを配置するルートディレクトリ（例: ~/repos）を config.json に設定してください。",
-    );
-  }
-  if (cfg.gitRemotePrefix === "" && cfg.autoClone) {
-    errors.push(
-      "autoClone: true ですが gitRemotePrefix が未設定です。clone 元の URL プレフィックス" +
-        "（例: git@github.com:your-org/）を設定するか、autoClone を false にしてください。",
-    );
+  for (const [repo, entry] of Object.entries(cfg.repoConfig)) {
+    if ((entry.localDirPath ?? "") === "") {
+      errors.push(
+        `repoConfig.${repo}.localDirPath が未設定です。事前に clone 済みのローカルディレクトリ（例: ~/repos/${repo}）を設定してください。`,
+      );
+    }
   }
   return errors;
 }
@@ -255,7 +337,13 @@ export function deepMerge<T>(base: T, override: unknown): T {
 
 /** パス系フィールドの `~` をホーム展開する。 */
 function normalize(config: Config): Config {
-  return { ...config, repoRoot: expandHome(config.repoRoot) };
+  const repoConfig = Object.fromEntries(
+    Object.entries(config.repoConfig).map(([repo, entry]) => [
+      repo,
+      { ...entry, localDirPath: expandHome(entry.localDirPath ?? "") },
+    ]),
+  );
+  return { ...config, repoConfig };
 }
 
 /** config.json を読み、zod で検証したうえでデフォルトと deep merge して返す。 */
