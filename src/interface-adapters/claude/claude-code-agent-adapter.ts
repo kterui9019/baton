@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { judgeResult } from "../../domain/agent-result.ts";
 import type { AgentResult } from "../../domain/agent-result.ts";
+import type { Config } from "../../infrastructure/config.ts";
 import { spawnAgent } from "../../infrastructure/process-runner.ts";
 import type { AgentHandle } from "../../infrastructure/process-runner.ts";
 import type {
@@ -9,22 +10,37 @@ import type {
   RunAgentParams,
 } from "../../use-cases/ports/coding-agent-port.ts";
 
+/**
+ * claude CLI の引数配列。
+ * 通常起動: `claude -p --verbose --output-format stream-json [--append-system-prompt ...] [<extra args>]`
+ * resume:  sessionId 指定時は `--resume <session-id>` を追加してセッションを引き継ぐ。
+ * 純粋関数なのでテストしやすい。
+ */
+export function buildClaudeArgs(
+  config: Config,
+  sessionId: string | undefined,
+  systemPrompt: string | undefined,
+): string[] {
+  return [
+    "-p",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    ...(sessionId ? ["--resume", sessionId] : []),
+    ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
+    ...config.agent.claude.args,
+  ];
+}
+
 function startAgent(params: RunAgentParams): AgentHandle {
-  const { config, prompt, systemPrompt, cwd, logFile, resultFile } = params;
+  const { config, prompt, systemPrompt, cwd, logFile, resultFile, sessionId } = params;
   try {
     if (existsSync(resultFile)) rmSync(resultFile);
     mkdirSync(dirname(resultFile), { recursive: true });
   } catch {
     /* ignore */
   }
-  const args = [
-    "-p",
-    "--verbose",
-    "--output-format",
-    "stream-json",
-    ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
-    ...config.agent.claude.args,
-  ];
+  const args = buildClaudeArgs(config, sessionId, systemPrompt);
   return spawnAgent(config.agent.claude.command, args, {
     cwd,
     input: prompt,

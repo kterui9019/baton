@@ -1,7 +1,44 @@
 import { test, expect } from "bun:test";
-import { decideEligibility } from "../../src/domain/eligibility.ts";
+import {
+  decideEligibility,
+  isNativeResumable,
+  resolveResumePlan,
+} from "../../src/domain/eligibility.ts";
 import type { PageState } from "../../src/domain/state.ts";
 import type { Ticket } from "../../src/domain/ticket.ts";
+
+test("isNativeResumable: human_rework は false、他3種は true", () => {
+  expect(isNativeResumable("human_rework")).toBe(false);
+  expect(isNativeResumable("ci_failure")).toBe(true);
+  expect(isNativeResumable("review_changes")).toBe(true);
+  expect(isNativeResumable("needs_info_answer")).toBe(true);
+});
+
+test("resolveResumePlan: resume なし（通常retry）は記録済み session_id をそのまま渡す", () => {
+  const plan = resolveResumePlan(undefined, "sess-1");
+  expect(plan.sessionIdForAgent).toBe("sess-1");
+  expect(plan.useNativeResume).toBe(false);
+});
+
+test("resolveResumePlan: human_rework は session_id が記録済みでも新規セッション", () => {
+  const plan = resolveResumePlan({ kind: "human_rework" }, "sess-1");
+  expect(plan.sessionIdForAgent).toBeUndefined();
+  expect(plan.useNativeResume).toBe(false);
+});
+
+test("resolveResumePlan: ci_failure/review_changes/needs_info_answer は記録済みならネイティブresume", () => {
+  for (const kind of ["ci_failure", "review_changes", "needs_info_answer"] as const) {
+    const plan = resolveResumePlan({ kind }, "sess-2");
+    expect(plan.sessionIdForAgent).toBe("sess-2");
+    expect(plan.useNativeResume).toBe(true);
+  }
+});
+
+test("resolveResumePlan: 記録済み session_id が無ければ resume種別でもフルプロンプトへフォールバック", () => {
+  const plan = resolveResumePlan({ kind: "ci_failure" }, undefined);
+  expect(plan.sessionIdForAgent).toBeUndefined();
+  expect(plan.useNativeResume).toBe(false);
+});
 
 const cfg = { triggerLanes: ["In Progress"], conditionValue: "Local" };
 

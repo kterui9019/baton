@@ -7,6 +7,7 @@
   "autoReworkLimit": 3,
   "promptTemplate": "prompts/task.md",
   "systemPromptTemplate": "",
+  "resumePromptTemplate": "prompts/resume.md",
   "setupTimeoutMs": 600000,
   "repoConfig": {
     "your-repo": {

@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { DEFAULT_CONFIG } from "../../src/infrastructure/config.ts";
 import type { Config } from "../../src/infrastructure/config.ts";
+import { buildClaudeArgs } from "../../src/interface-adapters/claude/claude-code-agent-adapter.ts";
 import { buildCodexArgs } from "../../src/interface-adapters/codex/codex-agent-adapter.ts";
 import { buildGrokArgs } from "../../src/interface-adapters/grok/grok-agent-adapter.ts";
 import { buildOpencodeArgs } from "../../src/interface-adapters/opencode/opencode-agent-adapter.ts";
@@ -70,5 +71,45 @@ test("buildCodexArgs: sessionId 指定時は exec resume サブコマンド", ()
     "sess-3",
     "--full-auto",
     "hello",
+  ]);
+});
+
+test("buildClaudeArgs: 通常起動は --resume なし", () => {
+  const cfg = withAgent({ claude: { command: "claude", args: ["--permission-mode", "bypassPermissions"] } });
+  expect(buildClaudeArgs(cfg, undefined, undefined)).toEqual([
+    "-p",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--permission-mode",
+    "bypassPermissions",
+  ]);
+});
+
+test("buildClaudeArgs: sessionId 指定時は --resume を差し込む", () => {
+  const cfg = withAgent({ claude: { command: "claude", args: ["--permission-mode", "bypassPermissions"] } });
+  expect(buildClaudeArgs(cfg, "sess-4", undefined)).toEqual([
+    "-p",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--resume",
+    "sess-4",
+    "--permission-mode",
+    "bypassPermissions",
+  ]);
+});
+
+test("buildClaudeArgs: systemPrompt と sessionId を両方指定", () => {
+  const cfg = withAgent({ claude: { command: "claude", args: [] } });
+  expect(buildClaudeArgs(cfg, "sess-5", "system rule")).toEqual([
+    "-p",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--resume",
+    "sess-5",
+    "--append-system-prompt",
+    "system rule",
   ]);
 });

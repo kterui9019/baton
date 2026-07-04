@@ -155,7 +155,7 @@ export interface AgentHandle {
   pid: number | undefined;
   /** プロセス終了時に解決。非ゼロ終了でも reject しない。 */
   done: Promise<RunResult>;
-  /** 外部からの停止（reconcile/shutdown 用）。SIGTERM → 猶予後 SIGKILL。 */
+  /** 外部からの停止（stopMovedOrDeletedRuns/shutdown 用）。SIGTERM → 猶予後 SIGKILL。 */
   terminate(graceMs?: number): void;
 }
 

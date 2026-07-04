@@ -135,6 +135,14 @@ export interface Config {
    * 書き込み指示など）を毎回のエージェント実行に注入する用途に使う。
    */
   systemPromptTemplate: string;
+  /**
+   * ネイティブセッション resume（ci_failure/review_changes/needs_info_answer で
+   * 前回 session_id が記録済みの場合）に使う軽量プロンプトテンプレートのパス
+   * （絶対パス or projectRoot 相対）。promptTemplate と同じ変数を使えるが、
+   * セッションが前回文脈を保持している前提でチケット本文（title/body）は
+   * 含めない想定。
+   */
+  resumePromptTemplate: string;
   /** カンバンプロバイダー設定。provider でどの実装を使うかを明示する。 */
   kanban: KanbanConfig;
   /** コーディングエージェント設定。provider でどの実装を使うかを明示する。 */
@@ -152,6 +160,7 @@ export const DEFAULT_CONFIG: Config = {
   autoReworkLimit: 3,
   promptTemplate: "prompts/task.md",
   systemPromptTemplate: "",
+  resumePromptTemplate: "prompts/resume.md",
   kanban: {
     provider: "notion",
     triggerLanes: ["In Progress"],
@@ -275,6 +284,7 @@ const ConfigInputSchema = z.object({
   autoReworkLimit: z.number().optional(),
   promptTemplate: z.string().optional(),
   systemPromptTemplate: z.string().optional(),
+  resumePromptTemplate: z.string().optional(),
   kanban: KanbanConfigInputSchema.optional(),
   agent: AgentConfigInputSchema.optional(),
 });

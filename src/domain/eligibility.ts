@@ -38,6 +38,32 @@ export interface ResumeContext {
   reviews?: Array<{ author: string; body: string; submittedAt: string }>;
 }
 
+/** resume種別がネイティブセッション継続（CLIの--resume相当）の対象かどうか。human_reworkのみ新規セッション扱い。 */
+export function isNativeResumable(kind: ResumeContext["kind"]): boolean {
+  return kind !== "human_rework";
+}
+
+export interface ResumePlan {
+  /** agent().start() に渡す session_id。undefined なら新規セッション。 */
+  sessionIdForAgent: string | undefined;
+  /** true ならネイティブ resume 用の軽量プロンプト（resumePromptTemplate）を使う。 */
+  useNativeResume: boolean;
+}
+
+/**
+ * resume種別と前回記録済みの session_id から、今回どうセッションを継続するか決める（純粋関数）。
+ * human_rework は常に新規セッション。それ以外は記録済み session_id があればネイティブ resume、
+ * なければ（未記録/抽出失敗）フルプロンプト・新規セッションにフォールバックする。
+ */
+export function resolveResumePlan(
+  resume: ResumeContext | undefined,
+  recordedSessionId: string | undefined,
+): ResumePlan {
+  const sessionIdForAgent = resume?.kind === "human_rework" ? undefined : recordedSessionId;
+  const useNativeResume = !!resume && isNativeResumable(resume.kind) && !!sessionIdForAgent;
+  return { sessionIdForAgent, useNativeResume };
+}
+
 /**
  * ディスパッチ可否判定（純粋関数）。
  * 候補クエリ自体がレーン/実行環境でフィルタ済みだが、config 再読込との

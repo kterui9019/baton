@@ -56,7 +56,7 @@ function runInit(installRoot: string, dataHome: string): void {
 
   const promptsDst = join(dataHome, "prompts");
   mkdirSync(promptsDst, { recursive: true });
-  for (const file of ["task.md", "system.example.md"]) {
+  for (const file of ["task.md", "resume.md", "system.example.md"]) {
     const dst = join(promptsDst, file);
     if (existsSync(dst)) continue;
     const src = join(installRoot, "prompts", file);

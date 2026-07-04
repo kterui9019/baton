@@ -6,10 +6,15 @@ import { parseResultFile } from "../domain/agent-result.ts";
 import { computeBackoff } from "../domain/backoff.ts";
 import { KanbanPageNotFoundError } from "../domain/errors.ts";
 import type { EligibilityDecision, ResumeContext } from "../domain/eligibility.ts";
-import { decideEligibility } from "../domain/eligibility.ts";
+import { decideEligibility, resolveResumePlan } from "../domain/eligibility.ts";
+import type { Result } from "../domain/result.ts";
+import { err as errResult, ok } from "../domain/result.ts";
 import type { PrCheck, PrWatchAction, ReviewInfo } from "../domain/review.ts";
 import { decidePrWatchAction } from "../domain/review.ts";
 import { rearmPrWatch } from "../domain/state.ts";
+import type { RunningEntrySnapshot } from "../domain/stop-decision.ts";
+import { classifyRunningEntry } from "../domain/stop-decision.ts";
+import { decideCleanup, isCleanupCandidate } from "../domain/cleanup-decision.ts";
 import type { PageState, PrWatchState, StateFile } from "../domain/state.ts";
 import type { CommentInfo, KanbanPageSnapshot, Ticket } from "../domain/ticket.ts";
 import type { WorkspaceInfo } from "../domain/workspace.ts";
@@ -64,7 +69,7 @@ interface ActiveEntry {
   workspace?: WorkspaceInfo;
   logFile?: string;
   startedAt: number;
-  /** オーケストレーター自身がレーンを動かしたか（reconcile の race 回避）。 */
+  /** オーケストレーター自身がレーンを動かしたか（stopMovedOrDeletedRuns の race 回避）。 */
   dispatchedByUs: boolean;
 }
 
@@ -120,6 +125,14 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     }
   }
 
+
+  async function tryAsync<T>(fn: () => Promise<T>): Promise<Result<T, string>> {
+    try {
+      return ok(await fn());
+    } catch (e) {
+      return errResult(oneLine(String(e)));
+    }
+  }
 
   function readRecoveredResult(pageId: string): AgentResult | null {
     const resultFile = join(resultsDir, `${pageId}.json`);
@@ -212,19 +225,33 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
 
     for (const [pageId, ps] of orphans) {
       const result = readRecoveredResult(pageId);
-      if (result && result.status === "success") {
-        await finalizeRecoveredSuccess(pageId, ps, result.prUrl, result.summary);
-      } else if (result && result.status === "needs_info" && result.question) {
-        await finalizeRecoveredNeedsInfo(pageId, ps, result.question);
-      } else {
-        state.pages[pageId] = { ...ps, status: "retry_queued", retryAt: 0, updatedAt: nowIso() };
-        log.info("tick", {
-          page_id: pageId,
-          msg: "起動リカバリ: running → retry_queued に降格",
-        });
+      if (result === null) {
+        demoteToRetryQueued(pageId, ps);
+        continue;
       }
+      await match(result)
+        .with({ status: "success" }, (r) =>
+          finalizeRecoveredSuccess(pageId, ps, r.prUrl, r.summary),
+        )
+        .with({ status: "needs_info" }, (r) =>
+          r.question
+            ? finalizeRecoveredNeedsInfo(pageId, ps, r.question)
+            : Promise.resolve(demoteToRetryQueued(pageId, ps)),
+        )
+        .with({ status: "failure" }, () =>
+          Promise.resolve(demoteToRetryQueued(pageId, ps)),
+        )
+        .exhaustive();
     }
     persist();
+  }
+
+  function demoteToRetryQueued(pageId: string, ps: PageState): void {
+    state.pages[pageId] = { ...ps, status: "retry_queued", retryAt: 0, updatedAt: nowIso() };
+    log.info("tick", {
+      page_id: pageId,
+      msg: "起動リカバリ: running → retry_queued に降格",
+    });
   }
 
 
@@ -243,9 +270,9 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     }
 
     try {
-      await reconcile();
+      await stopMovedOrDeletedRuns();
       await terminalCleanup();
-      await prReconcile();
+      await advancePrWatch();
       const candidates = await kanban().queryCandidates();
       const needsInfoAnswers = await checkNeedsInfoAnswers(candidates);
       dispatchLoop(candidates, needsInfoAnswers);
@@ -400,31 +427,12 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       }),
     );
 
-    let ws: WorkspaceInfo;
-    try {
-      ws = await workspace().createWorktree(ticket.pageId, ticket.title, ticket.repo as string);
-    } catch (err) {
-      await onFailure(ticket, attempt, `workspace 作成失敗: ${oneLine(String(err))}`, undefined);
-      active.delete(ticket.pageId);
+    const prepRes = await prepareWorkspace(ticket, entry);
+    if (prepRes.type === "err") {
+      await dispatchFail(ticket, attempt, prepRes.reason, undefined);
       return;
     }
-    entry.workspace = ws;
-    state.pages[ticket.pageId] = {
-      ...state.pages[ticket.pageId]!,
-      branch: ws.branch,
-      workspace: ws.path,
-      repoDir: ws.repoDir,
-      updatedAt: nowIso(),
-    };
-    persist();
-
-    try {
-      await workspace().setupWorktree(ws, ticket.repo as string);
-    } catch (err) {
-      await onFailure(ticket, attempt, `環境セットアップ失敗: ${oneLine(String(err))}`, undefined);
-      active.delete(ticket.pageId);
-      return;
-    }
+    const ws = prepRes.value;
 
     const body = await kanban().getPageMarkdown(ticket.pageId);
     let resumeSection = "";
@@ -440,10 +448,14 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
     const logFile = join(runsDir, `${ticket.pageId}-attempt${attempt}.log`);
     entry.logFile = logFile;
     const promptVars = buildPromptVars(ticket, ws, resultFile, attempt, body, resumeSection);
-    const prompt = renderPrompt(promptVars);
+    const { sessionIdForAgent, useNativeResume } = resolveResumePlan(resume, prevPs?.sessionId);
+    const prompt = useNativeResume ? renderResumePrompt(promptVars) : renderPrompt(promptVars);
     const systemPrompt = renderSystemPrompt(promptVars);
 
-    log.info("agent_start", { page_id: ticket.pageId, msg: `cwd=${ws.path}` });
+    log.info("agent_start", {
+      page_id: ticket.pageId,
+      msg: `cwd=${ws.path}${useNativeResume ? " (native resume)" : ""}`,
+    });
     const handle = agent().start({
       config: c,
       prompt,
@@ -451,38 +463,107 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
       cwd: ws.path,
       logFile,
       resultFile,
-      sessionId: prevPs?.sessionId,
+      sessionId: sessionIdForAgent,
     });
     entry.phase = "running";
     entry.handle = handle;
 
-    let result: AgentResult;
-    try {
-      const run = await handle.done;
-      log.info("agent_exit", {
-        page_id: ticket.pageId,
-        msg: `exit=${run.code} signal=${run.signal ?? "-"} timedOut=${run.timedOut}`,
-      });
-      result = agent().evaluateResult(resultFile, run.code, run.stdout);
-    } catch (err) {
-      await onFailure(ticket, attempt, `${c.agent.provider} 起動失敗: ${oneLine(String(err))}`, logFile);
-      active.delete(ticket.pageId);
-      return;
-    }
-
-    if (result.status === "success") {
-      await onSuccess(ticket, attempt, result.prUrl, result.summary, ws, resume, result.sessionId);
-    } else if (result.status === "needs_info" && result.question) {
-      await onNeedsInfo(ticket, attempt, result.question, ws, result.sessionId);
-    } else {
-      await onFailure(
+    const runRes = await runAgentToResult(ticket.pageId, handle, resultFile);
+    if (runRes.type === "err") {
+      await dispatchFail(
         ticket,
         attempt,
-        result.reason ?? result.summary ?? "失敗",
+        `${c.agent.provider} 起動失敗: ${runRes.reason}`,
         logFile,
-        result.sessionId,
       );
+      return;
     }
+    const result = runRes.value;
+
+    await match(result)
+      .with({ status: "success" }, (r) =>
+        onSuccess(ticket, attempt, r.prUrl, r.summary, ws, resume, r.sessionId),
+      )
+      .with({ status: "needs_info" }, (r) =>
+        r.question
+          ? onNeedsInfo(ticket, attempt, r.question, ws, r.sessionId)
+          : onFailure(
+              ticket,
+              attempt,
+              r.reason ?? r.summary ?? "失敗",
+              logFile,
+              r.sessionId,
+            ),
+      )
+      .with({ status: "failure" }, (r) =>
+        onFailure(
+          ticket,
+          attempt,
+          r.reason ?? r.summary ?? "失敗",
+          logFile,
+          r.sessionId,
+        ),
+      )
+      .exhaustive();
+    active.delete(ticket.pageId);
+  }
+
+  /**
+   * dispatch 準備段: worktree 作成 → state 反映 → 環境セットアップ。
+   * どこで落ちても reason を持った err を返し、副作用は「成功時のみ」に閉じる。
+   */
+  async function prepareWorkspace(
+    ticket: Ticket,
+    entry: ActiveEntry,
+  ): Promise<Result<WorkspaceInfo, string>> {
+    const wsRes = await tryAsync(() =>
+      workspace().createWorktree(ticket.pageId, ticket.title, ticket.repo as string),
+    );
+    if (wsRes.type === "err") return errResult(`workspace 作成失敗: ${wsRes.reason}`);
+    const ws = wsRes.value;
+    entry.workspace = ws;
+    state.pages[ticket.pageId] = {
+      ...state.pages[ticket.pageId]!,
+      branch: ws.branch,
+      workspace: ws.path,
+      repoDir: ws.repoDir,
+      updatedAt: nowIso(),
+    };
+    persist();
+
+    const setupRes = await tryAsync(() =>
+      workspace().setupWorktree(ws, ticket.repo as string),
+    );
+    if (setupRes.type === "err") return errResult(`環境セットアップ失敗: ${setupRes.reason}`);
+    return ok(ws);
+  }
+
+  /**
+   * エージェント起動〜結果評価。プロセス例外は err にまとめる（reason はメッセージのみ）。
+   */
+  async function runAgentToResult(
+    pageId: string,
+    handle: AgentHandle,
+    resultFile: string,
+  ): Promise<Result<AgentResult, string>> {
+    const runRes = await tryAsync(() => handle.done);
+    if (runRes.type === "err") return errResult(runRes.reason);
+    const run = runRes.value;
+    log.info("agent_exit", {
+      page_id: pageId,
+      msg: `exit=${run.code} signal=${run.signal ?? "-"} timedOut=${run.timedOut}`,
+    });
+    return ok(agent().evaluateResult(resultFile, run.code, run.stdout));
+  }
+
+  /** dispatch 内の失敗ハンドリング統一 helper（onFailure + active.delete）。 */
+  async function dispatchFail(
+    ticket: Ticket,
+    attempt: number,
+    reason: string,
+    logFile: string | undefined,
+  ): Promise<void> {
+    await onFailure(ticket, attempt, reason, logFile);
     active.delete(ticket.pageId);
   }
 
@@ -518,6 +599,11 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
 
   function renderPrompt(vars: Record<string, string>): string {
     return renderFromTemplate(cfg().promptTemplate, vars);
+  }
+
+  /** ネイティブ resume 時に使う軽量プロンプト（チケット全文を含まない）。 */
+  function renderResumePrompt(vars: Record<string, string>): string {
+    return renderFromTemplate(cfg().resumePromptTemplate, vars);
   }
 
   /** systemPromptTemplate が未設定なら undefined（`--append-system-prompt` を付与しない）。 */
@@ -748,42 +834,52 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
   }
 
 
-  async function reconcile(): Promise<void> {
+  async function stopMovedOrDeletedRuns(): Promise<void> {
     const c = cfg();
     const running = [...active.values()].filter((e) => e.phase === "running" && e.handle);
     for (const entry of running) {
-      let snapshot: KanbanPageSnapshot;
-      try {
-        snapshot = await kanban().getPage(entry.pageId);
-      } catch (err) {
-        if (err instanceof KanbanPageNotFoundError) {
-          log.warn("reconcile_kill", {
+      const snapshot = await fetchRunningSnapshot(entry.pageId);
+      const status = classifyRunningEntry({
+        snapshot,
+        triggerLanes: c.kanban.triggerLanes,
+        dispatchedByUs: entry.dispatchedByUs,
+      });
+      match(status)
+        .with({ type: "kill_gone" }, ({ reason }) => {
+          log.warn("stop_stray_kill", {
             page_id: entry.pageId,
-            msg: `ページが存在しない、停止: ${oneLine(String(err))}`,
+            msg:
+              reason === "not_found"
+                ? "ページが存在しない、停止"
+                : "アーカイブ/削除済み、停止",
           });
           killAndRelease(entry);
-        } else {
-          log.warn("reconcile", {
+        })
+        .with({ type: "kill_moved" }, ({ lane }) => {
+          log.warn("stop_stray_kill", {
             page_id: entry.pageId,
-            msg: `ページ取得失敗（スキップ）: ${oneLine(String(err))}`,
+            msg: `レーンが対象外(${lane})に移動、停止`,
           });
-        }
-        continue;
-      }
-      if (snapshot.isArchived || snapshot.isDeleted) {
-        log.warn("reconcile_kill", { page_id: entry.pageId, msg: "アーカイブ/削除済み、停止" });
-        killAndRelease(entry);
-        continue;
-      }
-      const lane = snapshot.ticket.lane;
-      const stillTrigger = lane !== null && c.kanban.triggerLanes.includes(lane);
-      if (!stillTrigger && !entry.dispatchedByUs) {
-        log.warn("reconcile_kill", {
-          page_id: entry.pageId,
-          msg: `レーンが対象外(${lane})に移動、停止`,
-        });
-        killAndRelease(entry);
-      }
+          killAndRelease(entry);
+        })
+        .with({ type: "fetch_error" }, ({ message }) => {
+          log.warn("stop_stray", {
+            page_id: entry.pageId,
+            msg: `ページ取得失敗（スキップ）: ${message}`,
+          });
+        })
+        .with({ type: "keep" }, () => {})
+        .exhaustive();
+    }
+  }
+
+  /** getPage を try/catch で ADT に落とす IO ヘルパ。 */
+  async function fetchRunningSnapshot(pageId: string): Promise<RunningEntrySnapshot> {
+    try {
+      return { type: "snapshot", value: await kanban().getPage(pageId) };
+    } catch (e) {
+      if (e instanceof KanbanPageNotFoundError) return { type: "not_found" };
+      return { type: "fetch_error", message: oneLine(String(e)) };
     }
   }
 
@@ -798,40 +894,46 @@ export function createOrchestrator(opts: OrchestratorOptions): OrchestratorHandl
   async function terminalCleanup(): Promise<void> {
     const c = cfg();
     for (const [pageId, ps] of Object.entries(state.pages)) {
-      if (ps.status !== "done" && ps.status !== "failed" && ps.status !== "needs_info") {
-        continue;
-      }
-      if (active.has(pageId)) continue;
-      let snapshot: KanbanPageSnapshot;
-      try {
-        snapshot = await kanban().getPage(pageId);
-      } catch {
-        continue;
-      }
-      const lane = snapshot.ticket.lane;
-      if (!lane || !c.kanban.terminalLanes.includes(lane)) continue;
-      if (ps.workspace) {
-        const repoDir =
-          ps.repoDir ??
-          (snapshot.ticket.repo
-            ? c.repoConfig[snapshot.ticket.repo]?.localDirPath
-            : undefined);
-        try {
-          if (repoDir) {
-            await workspace().removeWorktree(repoDir, ps.workspace);
-          }
-        } catch (err) {
-          log.warn("cleanup", { page_id: pageId, msg: `worktree 削除失敗: ${oneLine(String(err))}` });
+      if (!isCleanupCandidate(ps, active.has(pageId))) continue;
+      const snapshot = await tryFetchPage(pageId);
+      const action = decideCleanup({
+        ps,
+        snapshot,
+        terminalLanes: c.kanban.terminalLanes,
+        repoLocalDirPath: (repo) => c.repoConfig[repo]?.localDirPath,
+      });
+      if (action.type === "skip") continue;
+      if (action.worktree) {
+        const removeRes = await tryAsync(() =>
+          workspace().removeWorktree(action.worktree!.repoDir, action.worktree!.path),
+        );
+        if (removeRes.type === "err") {
+          log.warn("cleanup", {
+            page_id: pageId,
+            msg: `worktree 削除失敗: ${removeRes.reason}`,
+          });
         }
       }
       delete state.pages[pageId];
       persist();
-      log.info("cleanup", { page_id: pageId, msg: `terminal(${lane}) 到達、state から削除` });
+      log.info("cleanup", {
+        page_id: pageId,
+        msg: `terminal(${action.lane}) 到達、state から削除`,
+      });
+    }
+  }
+
+  /** getPage を握って snapshot | null に落とす。cleanup では失敗種別を区別しないので単純化。 */
+  async function tryFetchPage(pageId: string): Promise<KanbanPageSnapshot | null> {
+    try {
+      return await kanban().getPage(pageId);
+    } catch {
+      return null;
     }
   }
 
 
-  async function prReconcile(): Promise<void> {
+  async function advancePrWatch(): Promise<void> {
     const c = cfg();
     const now = Date.now();
     if (now - lastPrPollAt < c.prPollIntervalMs) return;
