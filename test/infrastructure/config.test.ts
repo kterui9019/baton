@@ -4,13 +4,20 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_CONFIG,
-  deepMerge,
   loadConfig,
   validateConfig,
 } from "../../src/infrastructure/config.ts";
 
-test("deepMerge: ネストを再帰マージ、配列は置換", () => {
-  const merged = deepMerge(DEFAULT_CONFIG, {
+/** 部分指定 JSON を書いて loadConfig した結果を返すヘルパ。 */
+function loadPartial(partial: unknown): ReturnType<typeof loadConfig> {
+  const dir = mkdtempSync(join(tmpdir(), "nsym-"));
+  const p = join(dir, "config.json");
+  writeFileSync(p, JSON.stringify(partial));
+  return loadConfig(p);
+}
+
+test("loadConfig: ネストを補完マージ、配列は置換", () => {
+  const merged = loadPartial({
     maxConcurrent: 5,
     agent: { timeoutMs: 1000 },
     kanban: { triggerLanes: ["TODO"] },
@@ -23,18 +30,14 @@ test("deepMerge: ネストを再帰マージ、配列は置換", () => {
   expect(merged.kanban.doneLane).toBe("Human Review");
 });
 
-test("deepMerge: 深いネスト（kanban.notion）だけ書き換えても他は残る", () => {
-  const merged = deepMerge(DEFAULT_CONFIG, {
+test("loadConfig: 深いネスト（kanban.notion）だけ書き換えても他は残る", () => {
+  const merged = loadPartial({
     kanban: { notion: { dataSourceId: "abc" } },
   });
   expect(merged.kanban.notion.dataSourceId).toBe("abc");
   expect(merged.kanban.notion.laneProperty).toBe("Status");
   expect(merged.kanban.provider).toBe("notion");
   expect(merged.kanban.triggerLanes).toEqual(["In Progress"]);
-});
-
-test("deepMerge: 非オブジェクト override はそのまま", () => {
-  expect(deepMerge({ a: 1 }, null)).toEqual({ a: 1 });
 });
 
 test("loadConfig: 部分指定 + ~ 展開", () => {

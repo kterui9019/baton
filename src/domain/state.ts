@@ -1,4 +1,3 @@
-import { match } from "ts-pattern";
 import { nowIso } from "../infrastructure/format.ts";
 
 export type PageStatus =
@@ -101,41 +100,6 @@ export function rearmPrWatch(
     reworkedSha: prev?.reworkedSha,
     handledReviewAt: prev?.handledReviewAt,
   };
-}
-
-/**
- * ワークスペース情報（branch/workspace/repoDir）を PageStateCommon にマージする純粋関数。
- * dispatch 準備段階で作成した worktree を状態に反映するのに使う。
- */
-export function assignWorkspace(
-  prev: PageState | undefined,
-  ws: { branch: string; path: string; repoDir: string },
-  now: string = nowIso(),
-): PageState {
-  const base: PageStateCommon = {
-    attempt: prev?.attempt ?? 1,
-    branch: ws.branch,
-    workspace: ws.path,
-    repoDir: ws.repoDir,
-    prUrl: prev?.prUrl,
-    prWatch: prev?.prWatch,
-    lastEditedTime: prev?.lastEditedTime,
-    sessionId: prev?.sessionId,
-    updatedAt: now,
-  };
-  if (!prev) return { ...base, status: "running" };
-  return match<PageState, PageState>(prev)
-    .with({ status: "retry_queued" }, (p) => ({ ...base, status: p.status, retryAt: p.retryAt }))
-    .with({ status: "needs_info" }, (p) => ({
-      ...base,
-      status: p.status,
-      questionAskedAt: p.questionAskedAt,
-      question: p.question,
-    }))
-    .with({ status: "running" }, () => ({ ...base, status: "running" }))
-    .with({ status: "done" }, () => ({ ...base, status: "done" }))
-    .with({ status: "failed" }, () => ({ ...base, status: "failed" }))
-    .exhaustive();
 }
 
 /** dispatch 開始時に prev から running 状態を組む。branch/workspace/repoDir/prUrl/prWatch は引き継ぐ。 */
@@ -290,22 +254,3 @@ export function toFailed(opts: {
   };
 }
 
-/**
- * 起動時リカバリ: running のまま残ったページ（孤児）を retry_queued へ降格。
- * attempt 据え置き・即時再試行可 (retryAt=0)。変更があれば true。
- */
-export function recoverOrphans(state: StateFile): boolean {
-  let changed = false;
-  for (const [pageId, ps] of Object.entries(state.pages)) {
-    if (ps.status === "running") {
-      state.pages[pageId] = {
-        ...ps,
-        status: "retry_queued",
-        retryAt: 0,
-        updatedAt: nowIso(),
-      };
-      changed = true;
-    }
-  }
-  return changed;
-}

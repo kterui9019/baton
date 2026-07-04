@@ -1,10 +1,12 @@
 import { test, expect } from "bun:test";
 import { DEFAULT_CONFIG } from "../../src/infrastructure/config.ts";
 import type { Config } from "../../src/infrastructure/config.ts";
-import { buildClaudeArgs } from "../../src/interface-adapters/claude/claude-code-agent-adapter.ts";
-import { buildCodexArgs } from "../../src/interface-adapters/codex/codex-agent-adapter.ts";
-import { buildGrokArgs } from "../../src/interface-adapters/grok/grok-agent-adapter.ts";
-import { buildOpencodeArgs } from "../../src/interface-adapters/opencode/opencode-agent-adapter.ts";
+import {
+  buildClaudeArgs,
+  buildCodexArgs,
+  buildGrokArgs,
+  buildOpencodeArgs,
+} from "../../src/interface-adapters/agent/cli-agent-adapter.ts";
 
 function withAgent(overrides: Partial<Config["agent"]> = {}): Config {
   return {

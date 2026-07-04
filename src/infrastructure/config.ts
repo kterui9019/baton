@@ -2,136 +2,140 @@ import { readFileSync, statSync } from "node:fs";
 import { z } from "zod";
 import { expandHome } from "./format.ts";
 
-export interface ClaudeAgentConfig {
-  command: string;
-  args: string[];
-}
+/**
+ * 設定は zod schema を唯一の情報源（single source of truth）とする。
+ * - 各フィールドに `.default(...)` を持たせ、型は `z.infer` で導出する
+ *   （出力型は default 適用後なので全フィールド必須になり、Config 本体の型と一致する）。
+ * - ネストしたオブジェクトには `.prefault({})` を付け、親フィールドが丸ごと欠損しても
+ *   内側の leaf default まで埋まるようにする（部分指定 config.json のマージを zod だけで賄う）。
+ */
 
-export interface TaktAgentConfig {
-  command: string;
-  args: string[];
-}
+const agentProviderSchema = z.enum(["claude", "takt", "opencode", "grok", "codex"]);
+export type AgentProvider = z.infer<typeof agentProviderSchema>;
 
-export interface OpencodeAgentConfig {
-  command: string;
-  args: string[];
-}
+const kanbanProviderSchema = z.enum(["notion", "github"]);
+export type KanbanProvider = z.infer<typeof kanbanProviderSchema>;
 
-export interface GrokAgentConfig {
-  command: string;
-  args: string[];
-}
+/** CLI コーディングエージェント共通の起動設定（コマンド名 + 追加引数）。 */
+const agentCli = (command: string, args: string[] = []) =>
+  z.object({
+    command: z.string().default(command),
+    args: z.array(z.string()).default(args),
+  });
+export type AgentCliConfig = z.infer<ReturnType<typeof agentCli>>;
 
-export interface CodexAgentConfig {
-  command: string;
-  args: string[];
-}
+const agentSchema = z
+  .object({
+    /** コーディングエージェント実装の選択。 */
+    provider: agentProviderSchema.default("claude"),
+    timeoutMs: z.number().default(3_600_000),
+    maxAttempts: z.number().default(2),
+    claude: agentCli("claude", ["--permission-mode", "bypassPermissions"]).prefault({}),
+    takt: agentCli("takt", ["--pipeline", "--skip-git", "--quiet"]).prefault({}),
+    opencode: agentCli("opencode").prefault({}),
+    grok: agentCli("grok").prefault({}),
+    codex: agentCli("codex").prefault({}),
+  })
+  .prefault({});
 
-export type AgentProvider = "claude" | "takt" | "opencode" | "grok" | "codex";
-
-export interface AgentConfig {
-  provider: AgentProvider;
-  timeoutMs: number;
-  maxAttempts: number;
-  claude: ClaudeAgentConfig;
-  takt: TaktAgentConfig;
-  opencode: OpencodeAgentConfig;
-  grok: GrokAgentConfig;
-  codex: CodexAgentConfig;
-}
-
-export interface NotionKanbanConfig {
-  dataSourceId: string;
-  laneProperty: string;
-  repoProperty: string;
-  titleProperty: string;
-  conditionProperty: string;
-  conditionValue: string;
-  /** PR リンク (rich_text) プロパティ名。"" なら読み書きをスキップ。 */
-  prProperty: string;
-  /** アクティビティ (rich_text) プロパティ名。"" なら読み書きをスキップ。 */
-  activityProperty: string;
-  ntnCommand: string;
-}
+const notionKanbanSchema = z
+  .object({
+    dataSourceId: z.string().default(""),
+    laneProperty: z.string().default("Status"),
+    repoProperty: z.string().default("Repo"),
+    titleProperty: z.string().default("Title"),
+    conditionProperty: z.string().default("Condition"),
+    conditionValue: z.string().default("Local"),
+    /** PR リンク (rich_text) プロパティ名。"" なら読み書きをスキップ。 */
+    prProperty: z.string().default("PR"),
+    /** アクティビティ (rich_text) プロパティ名。"" なら読み書きをスキップ。 */
+    activityProperty: z.string().default("Activity"),
+    ntnCommand: z.string().default("ntn"),
+  })
+  .prefault({});
 
 /**
  * GitHub Issues をカンバンとして扱う設定。lane はラベル
  * （`<lanePrefix><lane>` 形式、例: `status:In Progress`）で表現する。
  */
-export interface GitHubKanbanConfig {
-  /** 対象リポジトリのオーナー（個人 or org）。 */
-  owner: string;
-  /** 対象リポジトリ名の配列（owner 配下の <name> のみ、`owner/name` ではない）。 */
-  repos: string[];
-  /** lane ラベルのプレフィックス（デフォルト `status:`）。lane 名は「プレフィックス + triggerLanes/doneLane の値」で組み立てる。 */
-  lanePrefix: string;
-  /**
-   * 追加フィルタ用ラベル（Notion の Condition プロパティ相当）。
-   * "" なら無効（trigger lane のみで判定）、指定時はこのラベルが付いた issue のみ対象。
-   */
-  conditionLabel: string;
-}
+const githubKanbanSchema = z
+  .object({
+    /** 対象リポジトリのオーナー（個人 or org）。 */
+    owner: z.string().default(""),
+    /** 対象リポジトリ名の配列（owner 配下の <name> のみ、`owner/name` ではない）。 */
+    repos: z.array(z.string()).default([]),
+    /** lane ラベルのプレフィックス。lane 名は「プレフィックス + triggerLanes/doneLane の値」で組み立てる。 */
+    lanePrefix: z.string().default("status:"),
+    /**
+     * 追加フィルタ用ラベル（Notion の Condition プロパティ相当）。
+     * "" なら無効（trigger lane のみで判定）、指定時はこのラベルが付いた issue のみ対象。
+     */
+    conditionLabel: z.string().default(""),
+  })
+  .prefault({});
 
-export type KanbanProvider = "notion" | "github";
-
-export interface KanbanConfig {
-  provider: KanbanProvider;
-  triggerLanes: string[];
-  doneLane: string;
-  /** PR マージ検知時に移動するレーン。 */
-  mergedLane: string;
-  terminalLanes: string[];
-  notion: NotionKanbanConfig;
-  github: GitHubKanbanConfig;
-}
+const kanbanSchema = z
+  .object({
+    /** カンバンプロバイダー実装の選択。 */
+    provider: kanbanProviderSchema.default("notion"),
+    triggerLanes: z.array(z.string()).default(["In Progress"]),
+    doneLane: z.string().default("Human Review"),
+    /** PR マージ検知時に移動するレーン。 */
+    mergedLane: z.string().default("In Delivery"),
+    terminalLanes: z.array(z.string()).default(["Released", "Canceled"]),
+    notion: notionKanbanSchema,
+    github: githubKanbanSchema,
+  })
+  .prefault({});
 
 /** リポジトリ別の worktree セットアップ設定。 */
-export interface RepoSetupConfig {
+const repoSetupSchema = z.object({
   /**
    * clone元 → worktree へコピーするパス（clone元ルート基準の相対パス）。
    * gitignore された `.env` や `.claude` などを持ち込むのに使う。
    * ファイル・ディレクトリの両方に対応（ディレクトリは再帰コピー）。
    */
-  copy?: string[];
+  copy: z.array(z.string()).optional(),
   /** worktree を cwd に `sh -c` で順次実行するセットアップコマンド。 */
-  commands?: string[];
-}
+  commands: z.array(z.string()).optional(),
+});
 
 /**
  * リポジトリ単位の設定。「どこに置くか」「どうセットアップするか」を
  * 1つのオブジェクトにまとめる（kanban のプロバイダーに依存しない）。
  */
-export interface RepoConfigEntry {
+const repoConfigEntrySchema = z.object({
   /** ローカルの git リポジトリのディレクトリ（絶対パス、`~` 展開可）。 */
-  localDirPath: string;
+  localDirPath: z.string().default(""),
   /** 作業ブランチ名テンプレート。省略時はトップレベルの branchTemplate にフォールバック。 */
-  branchTemplate?: string;
+  branchTemplate: z.string().optional(),
   /** worktree セットアップ（.env コピー・依存インストール等）。 */
-  setup?: RepoSetupConfig;
-}
+  setup: repoSetupSchema.optional(),
+});
+export type RepoConfigEntry = z.infer<typeof repoConfigEntrySchema>;
 
-export interface Config {
-  pollIntervalMs: number;
-  maxConcurrent: number;
+const configSchema = z.object({
+  pollIntervalMs: z.number().default(30_000),
+  maxConcurrent: z.number().default(2),
   /**
    * true（デフォルト）のとき、カンバン上の自分が作成したチケットにだけ反応する。
    * false にすると他人が作成したチケットも dispatch 対象になる。
    */
-  onlyOwnTickets: boolean;
+  onlyOwnTickets: z.boolean().default(true),
   /** 作業ブランチ名テンプレートのグローバルデフォルト。repoConfig[repo].branchTemplate で上書き可能。 */
-  branchTemplate: string;
+  branchTemplate: z.string().default("feature/notion-{id}/{slug}"),
   /** worktree セットアップコマンドのタイムアウト (ms)。 */
-  setupTimeoutMs: number;
+  setupTimeoutMs: z.number().default(600_000),
   /** リポジトリ名（カンバン側の表示名）→ リポジトリ単位の設定。 */
-  repoConfig: Record<string, RepoConfigEntry>;
+  repoConfig: z.record(z.string(), repoConfigEntrySchema).default({}),
   /** gh CLI コマンド名（PR 監視用）。 */
-  ghCommand: string;
+  ghCommand: z.string().default("gh"),
   /** PR 監視（CI/レビュー/マージ）のポーリング間隔 (ms)。 */
-  prPollIntervalMs: number;
+  prPollIntervalMs: z.number().default(60_000),
   /** CI 失敗起因の自動 rework 回数上限。 */
-  autoReworkLimit: number;
+  autoReworkLimit: z.number().default(3),
   /** プロンプトテンプレートのパス（絶対パス or projectRoot 相対）。 */
-  promptTemplate: string;
+  promptTemplate: z.string().default("prompts/task.md"),
   /**
    * システムプロンプト追加用テンプレートのパス（絶対パス or projectRoot 相対）。
    * "" なら無効（デフォルト）。指定時は promptTemplate と同じ変数で描画し、
@@ -139,7 +143,7 @@ export interface Config {
    * 「このツール特有の運用ルール」（例: 呼び出し元の説明、進捗プロパティへの
    * 書き込み指示など）を毎回のエージェント実行に注入する用途に使う。
    */
-  systemPromptTemplate: string;
+  systemPromptTemplate: z.string().default(""),
   /**
    * ネイティブセッション resume（ci_failure/review_changes/needs_info_answer で
    * 前回 session_id が記録済みの場合）に使う軽量プロンプトテンプレートのパス
@@ -147,154 +151,17 @@ export interface Config {
    * セッションが前回文脈を保持している前提でチケット本文（title/body）は
    * 含めない想定。
    */
-  resumePromptTemplate: string;
+  resumePromptTemplate: z.string().default("prompts/resume.md"),
   /** カンバンプロバイダー設定。provider でどの実装を使うかを明示する。 */
-  kanban: KanbanConfig;
+  kanban: kanbanSchema,
   /** コーディングエージェント設定。provider でどの実装を使うかを明示する。 */
-  agent: AgentConfig;
-}
-
-export const DEFAULT_CONFIG: Config = {
-  pollIntervalMs: 30_000,
-  maxConcurrent: 2,
-  onlyOwnTickets: true,
-  branchTemplate: "feature/notion-{id}/{slug}",
-  setupTimeoutMs: 600_000,
-  repoConfig: {},
-  ghCommand: "gh",
-  prPollIntervalMs: 60_000,
-  autoReworkLimit: 3,
-  promptTemplate: "prompts/task.md",
-  systemPromptTemplate: "",
-  resumePromptTemplate: "prompts/resume.md",
-  kanban: {
-    provider: "notion",
-    triggerLanes: ["In Progress"],
-    doneLane: "Human Review",
-    mergedLane: "In Delivery",
-    terminalLanes: ["Released", "Canceled"],
-    notion: {
-      dataSourceId: "",
-      conditionProperty: "Condition",
-      conditionValue: "Local",
-      laneProperty: "Status",
-      repoProperty: "Repo",
-      titleProperty: "Title",
-      ntnCommand: "ntn",
-      prProperty: "PR",
-      activityProperty: "Activity",
-    },
-    github: {
-      owner: "",
-      repos: [],
-      lanePrefix: "status:",
-      conditionLabel: "",
-    },
-  },
-  agent: {
-    provider: "claude",
-    timeoutMs: 3_600_000,
-    maxAttempts: 2,
-    claude: {
-      command: "claude",
-      args: ["--permission-mode", "bypassPermissions"],
-    },
-    takt: {
-      command: "takt",
-      args: ["--pipeline", "--skip-git", "--quiet"],
-    },
-    opencode: {
-      command: "opencode",
-      args: [],
-    },
-    grok: {
-      command: "grok",
-      args: [],
-    },
-    codex: {
-      command: "codex",
-      args: [],
-    },
-  },
-};
-
-/**
- * config.json の入力形（すべて optional な deep-partial）を検証する zod schema。
- * 外部ファイルという境界のパースにのみ zod を使い、型が合っていれば通す
- * （値の意味的妥当性は validateConfig が別途チェックする）。
- */
-const AgentCliConfigInputSchema = z.object({
-  command: z.string().optional(),
-  args: z.array(z.string()).optional(),
+  agent: agentSchema,
 });
 
-const AgentConfigInputSchema = z.object({
-  provider: z.enum(["claude", "takt", "opencode", "grok", "codex"]).optional(),
-  timeoutMs: z.number().optional(),
-  maxAttempts: z.number().optional(),
-  claude: AgentCliConfigInputSchema.optional(),
-  takt: AgentCliConfigInputSchema.optional(),
-  opencode: AgentCliConfigInputSchema.optional(),
-  grok: AgentCliConfigInputSchema.optional(),
-  codex: AgentCliConfigInputSchema.optional(),
-});
+export type Config = z.infer<typeof configSchema>;
 
-const NotionKanbanConfigInputSchema = z.object({
-  dataSourceId: z.string().optional(),
-  laneProperty: z.string().optional(),
-  repoProperty: z.string().optional(),
-  titleProperty: z.string().optional(),
-  conditionProperty: z.string().optional(),
-  conditionValue: z.string().optional(),
-  prProperty: z.string().optional(),
-  activityProperty: z.string().optional(),
-  ntnCommand: z.string().optional(),
-});
-
-const GitHubKanbanConfigInputSchema = z.object({
-  owner: z.string().optional(),
-  repos: z.array(z.string()).optional(),
-  lanePrefix: z.string().optional(),
-  conditionLabel: z.string().optional(),
-});
-
-const KanbanConfigInputSchema = z.object({
-  provider: z.enum(["notion", "github"]).optional(),
-  triggerLanes: z.array(z.string()).optional(),
-  doneLane: z.string().optional(),
-  mergedLane: z.string().optional(),
-  terminalLanes: z.array(z.string()).optional(),
-  notion: NotionKanbanConfigInputSchema.optional(),
-  github: GitHubKanbanConfigInputSchema.optional(),
-});
-
-const RepoSetupConfigInputSchema = z.object({
-  copy: z.array(z.string()).optional(),
-  commands: z.array(z.string()).optional(),
-});
-
-const RepoConfigEntryInputSchema = z.object({
-  localDirPath: z.string().optional(),
-  branchTemplate: z.string().optional(),
-  setup: RepoSetupConfigInputSchema.optional(),
-});
-
-const ConfigInputSchema = z.object({
-  pollIntervalMs: z.number().optional(),
-  maxConcurrent: z.number().optional(),
-  onlyOwnTickets: z.boolean().optional(),
-  branchTemplate: z.string().optional(),
-  setupTimeoutMs: z.number().optional(),
-  repoConfig: z.record(z.string(), RepoConfigEntryInputSchema).optional(),
-  ghCommand: z.string().optional(),
-  prPollIntervalMs: z.number().optional(),
-  autoReworkLimit: z.number().optional(),
-  promptTemplate: z.string().optional(),
-  systemPromptTemplate: z.string().optional(),
-  resumePromptTemplate: z.string().optional(),
-  kanban: KanbanConfigInputSchema.optional(),
-  agent: AgentConfigInputSchema.optional(),
-});
+/** schema から導出したデフォルト設定（空入力を parse して全 default を確定させる）。 */
+export const DEFAULT_CONFIG: Config = configSchema.parse({});
 
 /**
  * 必須設定の検証（純粋関数）。エラーメッセージの配列を返す（空なら valid）。
@@ -332,44 +199,25 @@ export function validateConfig(cfg: Config): string[] {
   return errors;
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** base をベースに override を再帰マージ（配列は override で置換）。 */
-export function deepMerge<T>(base: T, override: unknown): T {
-  if (!isPlainObject(override)) return base;
-  if (!isPlainObject(base)) return override as T;
-  const out: Record<string, unknown> = { ...base };
-  for (const [key, value] of Object.entries(override)) {
-    const prev = (base as Record<string, unknown>)[key];
-    if (isPlainObject(prev) && isPlainObject(value)) {
-      out[key] = deepMerge(prev, value);
-    } else {
-      out[key] = value;
-    }
-  }
-  return out as T;
-}
-
 /** パス系フィールドの `~` をホーム展開する。 */
 function normalize(config: Config): Config {
   const repoConfig = Object.fromEntries(
     Object.entries(config.repoConfig).map(([repo, entry]) => [
       repo,
-      { ...entry, localDirPath: expandHome(entry.localDirPath ?? "") },
+      { ...entry, localDirPath: expandHome(entry.localDirPath) },
     ]),
   );
   return { ...config, repoConfig };
 }
 
-/** config.json を読み、zod で検証したうえでデフォルトと deep merge して返す。 */
+/**
+ * config.json を読み、zod schema で検証しつつ欠損フィールドを default 補完して返す。
+ * 部分指定でも `.default()`/`.prefault()` が全階層の欠損を埋める。
+ */
 export function loadConfig(path: string): Config {
   const raw = readFileSync(path, "utf8");
   const json = JSON.parse(raw) as unknown;
-  const parsed = ConfigInputSchema.parse(json);
-  const merged = deepMerge(DEFAULT_CONFIG, parsed);
-  return normalize(merged);
+  return normalize(configSchema.parse(json));
 }
 
 function safeMtime(path: string): number {

@@ -1,30 +1,6 @@
 import { test, expect } from "bun:test";
-import { emptyState, rearmPrWatch, recoverOrphans } from "../../src/domain/state.ts";
+import { emptyState, rearmPrWatch } from "../../src/domain/state.ts";
 import type { StateFile } from "../../src/domain/state.ts";
-
-test("recoverOrphans: running → retry_queued に降格", () => {
-  const s: StateFile = {
-    version: 1,
-    pages: {
-      a: { status: "running", attempt: 2, updatedAt: "t" },
-      b: { status: "done", attempt: 1, updatedAt: "t" },
-    },
-  };
-  const changed = recoverOrphans(s);
-  expect(changed).toBe(true);
-  expect(s.pages.a?.status).toBe("retry_queued");
-  expect(s.pages.a?.attempt).toBe(2);
-  expect(s.pages.a?.status === "retry_queued" && s.pages.a.retryAt).toBe(0);
-  expect(s.pages.b?.status).toBe("done");
-});
-
-test("recoverOrphans: running が無ければ false", () => {
-  const s: StateFile = {
-    version: 1,
-    pages: { a: { status: "failed", attempt: 2, updatedAt: "t" } },
-  };
-  expect(recoverOrphans(s)).toBe(false);
-});
 
 test("emptyState: version 1 と空 pages", () => {
   expect(emptyState()).toEqual({ version: 1, pages: {} });
