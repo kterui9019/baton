@@ -14,10 +14,9 @@ import type {
 import type { PageState } from "../../src/domain/state.ts";
 import type { Ticket } from "../../src/domain/ticket.ts";
 
-test("isNativeResumable: human_rework は false、他3種は true", () => {
+test("isNativeResumable: human_rework は false、他2種は true", () => {
   expect(isNativeResumable("human_rework")).toBe(false);
   expect(isNativeResumable("ci_failure")).toBe(true);
-  expect(isNativeResumable("review_changes")).toBe(true);
   expect(isNativeResumable("needs_info_answer")).toBe(true);
 });
 
@@ -33,8 +32,8 @@ test("resolveResumePlan: human_rework は session_id が記録済みでも新規
   expect(plan.useNativeResume).toBe(false);
 });
 
-test("resolveResumePlan: ci_failure/review_changes/needs_info_answer は記録済みならネイティブresume", () => {
-  for (const kind of ["ci_failure", "review_changes", "needs_info_answer"] as const) {
+test("resolveResumePlan: ci_failure/needs_info_answer は記録済みならネイティブresume", () => {
+  for (const kind of ["ci_failure", "needs_info_answer"] as const) {
     const plan = resolveResumePlan({ kind }, "sess-2");
     expect(plan.sessionIdForAgent).toBe("sess-2");
     expect(plan.useNativeResume).toBe(true);
@@ -325,18 +324,6 @@ test("buildResumeContext: ci_failure は ciFailures を透過、since=lastEdited
     prUrl: "https://github.com/o/r/pull/1",
     since: "2026-07-01T00:00:00.000Z",
     ciFailures: "log-tail",
-  });
-});
-
-test("buildResumeContext: review_changes は reviews を透過", () => {
-  const reviews = [{ author: "alice", body: "please fix", submittedAt: "2026-07-02T00:00:00Z" }];
-  expect(
-    buildResumeContext({ kind: "review_changes", from: donePs, reviews }),
-  ).toEqual({
-    kind: "review_changes",
-    prUrl: "https://github.com/o/r/pull/1",
-    since: "2026-07-01T00:00:00.000Z",
-    reviews,
   });
 });
 

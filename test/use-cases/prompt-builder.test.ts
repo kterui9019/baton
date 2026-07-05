@@ -3,7 +3,6 @@ import {
   renderCiFixSection,
   renderNeedsInfoResumeSection,
   renderResumeSection,
-  renderReviewFixSection,
   renderReworkSection,
   renderTemplate,
 } from "../../src/use-cases/prompt-builder.ts";
@@ -81,10 +80,6 @@ test("renderResumeSection: kind 別ディスパッチ", () => {
   expect(
     renderResumeSection({ kind: "ci_failure", prUrl: "u", ciFailures: "log" }, comments),
   ).toBe(renderCiFixSection({ prUrl: "u", ciFailures: "log" }));
-  const reviews = [{ author: "a", body: "b", submittedAt: "t" }];
-  expect(
-    renderResumeSection({ kind: "review_changes", prUrl: "u", reviews }, comments),
-  ).toBe(renderReviewFixSection({ prUrl: "u", reviews }));
 });
 
 test("renderCiFixSection: PR・失敗ログ・作業条件を含む", () => {
@@ -106,29 +101,3 @@ test("renderCiFixSection: ログなしはフォールバック文言", () => {
   expect(out).toContain("（記録なし）");
 });
 
-test("renderReviewFixSection: レビュー列挙（author/submittedAt/body）と作業条件を含む", () => {
-  const out = renderReviewFixSection({
-    prUrl: "https://github.com/o/r/pull/2",
-    reviews: [
-      {
-        author: "reviewer1",
-        body: "エラーハンドリングを追加してください",
-        submittedAt: "2026-07-01T10:30:00Z",
-      },
-      { author: "reviewer2", body: "  ", submittedAt: "2026-07-01T11:00:00Z" },
-    ],
-  });
-  expect(out).toContain("changes requested");
-  expect(out).toContain("https://github.com/o/r/pull/2");
-  expect(out).toContain("@reviewer1");
-  expect(out).toContain("2026-07-01 10:30");
-  expect(out).toContain("エラーハンドリングを追加してください");
-  expect(out).not.toContain("@reviewer2");
-  expect(out).toContain("同じブランチへ push");
-  expect(out).toContain("PR コメントで説明");
-});
-
-test("renderReviewFixSection: レビューなしはフォールバック文言", () => {
-  const out = renderReviewFixSection({ prUrl: "u", reviews: [] });
-  expect(out).toContain("レビュー本文を取得できませんでした");
-});

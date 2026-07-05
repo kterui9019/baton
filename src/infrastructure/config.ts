@@ -130,7 +130,7 @@ const configSchema = z.object({
   repoConfig: z.record(z.string(), repoConfigEntrySchema).default({}),
   /** gh CLI コマンド名（PR 監視用）。 */
   ghCommand: z.string().default("gh"),
-  /** PR 監視（CI/レビュー/マージ）のポーリング間隔 (ms)。 */
+  /** PR 監視（CI/マージ）のポーリング間隔 (ms)。 */
   prPollIntervalMs: z.number().default(60_000),
   /** CI 失敗起因の自動 rework 回数上限。 */
   autoReworkLimit: z.number().default(3),
@@ -145,7 +145,7 @@ const configSchema = z.object({
    */
   systemPromptTemplate: z.string().default(""),
   /**
-   * ネイティブセッション resume（ci_failure/review_changes/needs_info_answer で
+   * ネイティブセッション resume（ci_failure/needs_info_answer で
    * 前回 session_id が記録済みの場合）に使う軽量プロンプトテンプレートのパス
    * （絶対パス or projectRoot 相対）。promptTemplate と同じ変数を使えるが、
    * セッションが前回文脈を保持している前提でチケット本文（title/body）は

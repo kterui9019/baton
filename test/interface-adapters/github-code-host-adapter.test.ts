@@ -3,7 +3,6 @@ import {
   createGitHubCodeHostAdapter,
   extractRunId,
   parsePrSnapshot,
-  parseReviews,
   repoSlugFromPrUrl,
   truncateLog,
 } from "../../src/interface-adapters/github/github-code-host-adapter.ts";
@@ -30,7 +29,6 @@ test("repoSlugFromPrUrl: 不正 URL は null", () => {
 const snapshotFixture = {
   state: "OPEN",
   mergedAt: null,
-  reviewDecision: "REVIEW_REQUIRED",
   headRefOid: "abc123def456",
   statusCheckRollup: [
     {
@@ -61,7 +59,6 @@ test("parsePrSnapshot: CheckRun / StatusContext 混在を正規化", () => {
   expect(snap).not.toBeNull();
   expect(snap!.state).toBe("OPEN");
   expect(snap!.headSha).toBe("abc123def456");
-  expect(snap!.reviewDecision).toBe("REVIEW_REQUIRED");
   expect(snap!.checks).toEqual([
     { name: "build", status: "success", detailsUrl: "https://github.com/o/r/actions/runs/111/job/1" },
     { name: "test", status: "pending", detailsUrl: "https://github.com/o/r/actions/runs/222/job/2" },
@@ -132,25 +129,6 @@ test("parsePrSnapshot: 不正入力は null", () => {
   expect(parsePrSnapshot({ state: "UNKNOWN" })).toBeNull();
 });
 
-test("parseReviews: reviews 配列を ReviewInfo[] へ", () => {
-  const json = {
-    reviews: [
-      { author: { login: "alice" }, state: "CHANGES_REQUESTED", body: "テストを追加してください", submittedAt: "2026-07-01T10:00:00Z" },
-      { author: { login: "bob" }, state: "APPROVED", body: "", submittedAt: "2026-07-01T11:00:00Z" },
-    ],
-  };
-  expect(parseReviews(json)).toEqual([
-    { author: "alice", state: "CHANGES_REQUESTED", body: "テストを追加してください", submittedAt: "2026-07-01T10:00:00Z" },
-    { author: "bob", state: "APPROVED", body: "", submittedAt: "2026-07-01T11:00:00Z" },
-  ]);
-});
-
-test("parseReviews: 不正 JSON は空配列", () => {
-  expect(parseReviews(null)).toEqual([]);
-  expect(parseReviews({})).toEqual([]);
-  expect(parseReviews({ reviews: "x" })).toEqual([]);
-});
-
 test("extractRunId: Actions URL から run ID を抽出", () => {
   expect(extractRunId("https://github.com/o/r/actions/runs/123456/job/789")).toBe("123456");
   expect(extractRunId("https://github.com/o/r/actions/runs/42")).toBe("42");
@@ -211,7 +189,7 @@ test("fetchPrSnapshot: gh pr view の引数と正常パース", async () => {
   expect(calls.length).toBe(1);
   expect(calls[0]!.cmd).toBe("gh");
   expect(calls[0]!.args).toEqual([
-    "pr", "view", PR_URL, "--json", "state,mergedAt,reviewDecision,statusCheckRollup,headRefOid",
+    "pr", "view", PR_URL, "--json", "state,mergedAt,statusCheckRollup,headRefOid",
   ]);
   expect((calls[0]!.opts as { timeoutMs?: number }).timeoutMs).toBe(30_000);
   expect(snap!.headSha).toBe("abc123def456");
@@ -227,37 +205,6 @@ test("fetchPrSnapshot: 非ゼロ終了 / 不正 JSON は null（throw しない�
     mockRunner(() => okResult("not json")).run,
   );
   expect(await broken.fetchPrSnapshot(PR_URL)).toBeNull();
-});
-
-test("fetchReviews: gh pr view --json reviews を呼びパース", async () => {
-  const { run, calls } = mockRunner(() =>
-    okResult(JSON.stringify({
-      reviews: [{ author: { login: "alice" }, state: "CHANGES_REQUESTED", body: "直してください", submittedAt: "2026-07-01T10:00:00Z" }],
-    })),
-  );
-  const gh = createGitHubCodeHostAdapter({ ghCommand: "gh" }, run);
-  const reviews = await gh.fetchReviews(PR_URL);
-  expect(calls[0]!.args).toEqual(["pr", "view", PR_URL, "--json", "reviews"]);
-  expect(reviews.length).toBe(1);
-  expect(reviews[0]!.author).toBe("alice");
-});
-
-test("fetchInlineComments: gh api を呼び ReviewInfo へ、失敗時は []", async () => {
-  const { run, calls } = mockRunner(() =>
-    okResult(JSON.stringify([{ user: { login: "carol" }, body: "ここ typo", created_at: "2026-07-02T01:00:00Z" }])),
-  );
-  const gh = createGitHubCodeHostAdapter({ ghCommand: "gh" }, run);
-  const comments = await gh.fetchInlineComments(PR_URL);
-  expect(calls[0]!.args).toEqual(["api", "repos/o/r/pulls/12/comments"]);
-  expect(comments).toEqual([{ author: "carol", state: "INLINE", body: "ここ typo", submittedAt: "2026-07-02T01:00:00Z" }]);
-
-  const fail = createGitHubCodeHostAdapter({ ghCommand: "gh" }, mockRunner(() => ngResult()).run);
-  expect(await fail.fetchInlineComments(PR_URL)).toEqual([]);
-
-  const noop = mockRunner(() => okResult("[]"));
-  const gh2 = createGitHubCodeHostAdapter({ ghCommand: "gh" }, noop.run);
-  expect(await gh2.fetchInlineComments("https://example.com/x")).toEqual([]);
-  expect(noop.calls.length).toBe(0);
 });
 
 test("fetchFailedCheckLogs: run ID あり + gh 成功 → ログセクション", async () => {

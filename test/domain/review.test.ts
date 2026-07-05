@@ -27,7 +27,6 @@ test("summarizeChecks: 件数と failed 抽出", () => {
 const snap = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
   state: "OPEN",
   headSha: "sha-1",
-  reviewDecision: "",
   checks: [],
   ...over,
 });
@@ -36,18 +35,8 @@ const watch = (over: Partial<PrWatchInput> = {}): PrWatchInput => ({
   autoReworkCount: 0,
   ...over,
 });
-const crReview = (submittedAt: string, body = "直してください") => ({
-  author: "alice",
-  state: "CHANGES_REQUESTED",
-  body,
-  submittedAt,
-});
-const decide = (
-  s: PrSnapshot,
-  w: PrWatchInput,
-  reviews: ReturnType<typeof crReview>[] = [],
-  autoReworkLimit = 3,
-) => decidePrWatchAction({ snapshot: s, reviews, watch: w, autoReworkLimit });
+const decide = (s: PrSnapshot, w: PrWatchInput, autoReworkLimit = 3) =>
+  decidePrWatchAction({ snapshot: s, watch: w, autoReworkLimit });
 
 test("decide: MERGED → merged（failure があっても優先）", () => {
   const a = decide(snap({ state: "MERGED", checks: [ngCheck] }), watch());
@@ -64,54 +53,6 @@ test("decide: awaitingHuman → none（failure があっても防御）", () => 
     watch({ awaitingHuman: true, autoReworkCount: 3 }),
   );
   expect(a.type).toBe("none");
-});
-
-test("decide: phase review + CHANGES_REQUESTED（handledReviewAt 未設定）→ review_rework", () => {
-  const r1 = crReview("2026-07-01T10:00:00Z");
-  const r2 = crReview("2026-07-01T12:00:00Z", "こちらも");
-  const a = decide(
-    snap({ reviewDecision: "CHANGES_REQUESTED", checks: [okCheck] }),
-    watch({ phase: "review" }),
-    [r1, r2, { ...crReview("2026-07-01T13:00:00Z"), state: "APPROVED" }],
-  );
-  expect(a).toEqual({
-    type: "review_rework",
-    reviews: [r1, r2],
-    latestSubmittedAt: "2026-07-01T12:00:00Z",
-  });
-});
-
-test("decide: handledReviewAt 以前の CHANGES_REQUESTED は抑止（全 green なら none）", () => {
-  const a = decide(
-    snap({ reviewDecision: "CHANGES_REQUESTED", checks: [okCheck] }),
-    watch({ phase: "review", handledReviewAt: "2026-07-01T12:00:00Z" }),
-    [crReview("2026-07-01T10:00:00Z"), crReview("2026-07-01T12:00:00Z")],
-  );
-  expect(a.type).toBe("none");
-});
-
-test("decide: handledReviewAt より新しい CHANGES_REQUESTED だけで再発火", () => {
-  const older = crReview("2026-07-01T10:00:00Z");
-  const newer = crReview("2026-07-02T09:00:00Z", "追加指摘");
-  const a = decide(
-    snap({ reviewDecision: "CHANGES_REQUESTED" }),
-    watch({ phase: "review", handledReviewAt: "2026-07-01T12:00:00Z" }),
-    [older, newer],
-  );
-  expect(a).toEqual({
-    type: "review_rework",
-    reviews: [newer],
-    latestSubmittedAt: "2026-07-02T09:00:00Z",
-  });
-});
-
-test("decide: phase ci では CHANGES_REQUESTED を無視して CI 優先", () => {
-  const a = decide(
-    snap({ reviewDecision: "CHANGES_REQUESTED", checks: [ngCheck] }),
-    watch({ phase: "ci" }),
-    [crReview("2026-07-01T10:00:00Z")],
-  );
-  expect(a).toEqual({ type: "ci_rework", headSha: "sha-1", failedChecks: [ngCheck] });
 });
 
 test("decide: CI failure → ci_rework（headSha / failedChecks 付き）", () => {
@@ -134,7 +75,6 @@ test("decide: autoReworkCount が上限到達 → ci_limit", () => {
   const a = decide(
     snap({ checks: [ngCheck] }),
     watch({ autoReworkCount: 3, reworkedSha: "sha-old" }),
-    [],
     3,
   );
   expect(a).toEqual({ type: "ci_limit", failedChecks: [ngCheck] });

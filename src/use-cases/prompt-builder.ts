@@ -138,42 +138,6 @@ export function renderCiFixSection(opts: {
   return lines.join("\n");
 }
 
-export function renderReviewFixSection(opts: {
-  prUrl?: string;
-  reviews?: Array<{ author: string; body: string; submittedAt: string }>;
-}): string {
-  const lines: string[] = [
-    "# レビュー指摘への対応依頼（changes requested）",
-    "",
-    "あなたが作成した PR にレビューで修正依頼（changes requested）が来ました。以下の指摘に対応してください。",
-    opts.prUrl ? `対象の PR: ${opts.prUrl}` : "対象の PR: （記録なし）",
-    "",
-    "## レビュー指摘",
-    "",
-  ];
-  const reviews = (opts.reviews ?? []).filter((r) => r.body.trim() !== "");
-  if (reviews.length > 0) {
-    for (const r of reviews) {
-      const ts = r.submittedAt.slice(0, 16).replace("T", " ");
-      lines.push(`- [${ts}] @${r.author || "(不明)"}: ${r.body.trim()}`);
-    }
-  } else {
-    lines.push(
-      "レビュー本文を取得できませんでした。PR のレビューコメントを `gh pr view --comments` 等で確認して対応してください。",
-    );
-  }
-  lines.push(
-    "",
-    "## 対応時の作業条件",
-    "",
-    "- 既存の作業ブランチに追加コミットを積み、同じブランチへ push してください（PR がそのまま更新されます）。PR は作り直さないこと。",
-    "- 対応方針が指摘内容と異なる場合は、その理由を PR コメントで説明してください。その際は本文の先頭に「🤖 [baton](https://github.com/kterui9019/baton) 経由の自動エージェントによる返信です」と明記し、人間のレビュワーが自動投稿と分かるようにしてください。",
-    "- 完了報告の `pr_url` には既存の PR の URL を書いてください。",
-    "",
-  );
-  return lines.join("\n");
-}
-
 /** resume 種別に応じたプロンプト差し込みセクションを組み立てる。テンプレート変数 `{{rework}}` に埋め込まれる。 */
 export function renderResumeSection(
   ctx: ResumeContext,
@@ -188,9 +152,6 @@ export function renderResumeSection(
     )
     .with({ kind: "ci_failure" }, (c) =>
       renderCiFixSection({ prUrl: c.prUrl, ciFailures: c.ciFailures }),
-    )
-    .with({ kind: "review_changes" }, (c) =>
-      renderReviewFixSection({ prUrl: c.prUrl, reviews: c.reviews }),
     )
     .exhaustive();
 }

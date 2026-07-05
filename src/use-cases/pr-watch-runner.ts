@@ -1,7 +1,7 @@
 import { match } from "ts-pattern";
 import type { ResumeInput } from "../domain/eligibility.ts";
 import type { PageState, PrWatchState, StateFile } from "../domain/state.ts";
-import { decidePrWatchAction, type PrWatchAction, type ReviewInfo } from "../domain/review.ts";
+import { decidePrWatchAction, type PrWatchAction } from "../domain/review.ts";
 import type { Config } from "../infrastructure/config.ts";
 import { nowIso, oneLine } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
@@ -64,13 +64,8 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
           });
           continue;
         }
-        let reviews: ReviewInfo[] = [];
-        if (watch.phase === "review") {
-          reviews = await ch.fetchReviews(watch.prUrl);
-        }
         const action = decidePrWatchAction({
           snapshot,
-          reviews,
           watch,
           autoReworkLimit: c.autoReworkLimit,
         });
@@ -200,46 +195,6 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
     await deps.kanbanIo.refreshLastEditedTime("ci_limit_refresh", pageId, "done");
   }
 
-  async function handleReviewRework(
-    pageId: string,
-    ps: PageState,
-    watch: PrWatchState,
-    a: Extract<PrWatchAction, { type: "review_rework" }>,
-  ): Promise<void> {
-    const c = deps.cfg();
-    if (!deps.canStartRework()) {
-      deps.log.info("pr_watch", {
-        page_id: pageId,
-        msg: "レビュー rework をスキップ（スロット満杯/シャットダウン中）、次回へ持ち越し",
-      });
-      return;
-    }
-    const nextWatch: PrWatchState = {
-      ...watch,
-      handledReviewAt: a.latestSubmittedAt,
-      autoReworkCount: 0,
-    };
-    deps.getState().pages[pageId] = { ...ps, prWatch: nextWatch, updatedAt: nowIso() };
-    deps.persist();
-    deps.log.info("pr_watch", {
-      page_id: pageId,
-      msg: `changes requested を検知 (${a.reviews.length} 件) → 自動 rework: ${watch.prUrl}`,
-    });
-    const inline = await deps.codeHost().fetchInlineComments(watch.prUrl);
-    const reviews = [...a.reviews, ...inline].map((r) => ({
-      author: r.author,
-      body: r.body,
-      submittedAt: r.submittedAt,
-    }));
-    const lane0 = c.kanban.triggerLanes[0];
-    if (lane0) {
-      await deps.kanbanIo.safeUpdate("review_rework_lane", pageId, (k) =>
-        k.updateTicket(pageId, { lane: lane0 }),
-      );
-    }
-    await deps.dispatchAutoRework(pageId, { kind: "review_changes", from: ps, reviews });
-  }
-
   async function handlePrWatchAction(
     pageId: string,
     ps: PageState,
@@ -253,7 +208,6 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
       .with({ type: "ci_green" }, () => handleCiGreen(pageId, ps, watch, headSha))
       .with({ type: "ci_rework" }, (a) => handleCiRework(pageId, ps, watch, a))
       .with({ type: "ci_limit" }, (a) => handleCiLimit(pageId, ps, watch, a))
-      .with({ type: "review_rework" }, (a) => handleReviewRework(pageId, ps, watch, a))
       .with({ type: "none" }, (a) => {
         deps.log.info("pr_watch", {
           page_id: pageId,

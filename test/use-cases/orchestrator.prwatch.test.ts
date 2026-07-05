@@ -105,14 +105,12 @@ function pageJson(pageId: string, lane: string, repo = "repoX") {
 function ghSnapshot(o: {
   state: "OPEN" | "MERGED" | "CLOSED";
   headSha: string;
-  reviewDecision?: string;
   checks?: unknown[];
   mergedAt?: string;
 }): string {
   return JSON.stringify({
     state: o.state,
     mergedAt: o.mergedAt ?? null,
-    reviewDecision: o.reviewDecision ?? "",
     statusCheckRollup: o.checks ?? [],
     headRefOid: o.headSha,
   });
@@ -133,14 +131,12 @@ const failCheck = (name: string, runId = "123") => ({
   detailsUrl: `https://github.com/o/r/actions/runs/${runId}/job/9`,
 });
 
-const SNAPSHOT_FIELDS = "state,mergedAt,reviewDecision,statusCheckRollup,headRefOid";
+const SNAPSHOT_FIELDS = "state,mergedAt,statusCheckRollup,headRefOid";
 
-function ghResponder(o: { snapshot: string; reviews?: string; runLog?: string }): Responder {
+function ghResponder(o: { snapshot: string; runLog?: string }): Responder {
   return (args) => {
     if (args[0] === "pr" && args[1] === "view" && args[4] === SNAPSHOT_FIELDS) return ok(o.snapshot);
-    if (args[0] === "pr" && args[1] === "view" && args[4] === "reviews") return ok(o.reviews ?? JSON.stringify({ reviews: [] }));
     if (args[0] === "run" && args[1] === "view") return ok(o.runLog ?? "FAIL: mock log");
-    if (args[0] === "api") return ok("[]");
     return undefined;
   };
 }
@@ -274,7 +270,6 @@ test("advancePrWatch: merged → mergedLane PATCH + prWatch 削除 + コメン�
     },
     gh: ghResponder({
       snapshot: ghSnapshot({ state: "MERGED", mergedAt: "2026-07-02T01:00:00Z", headSha: "sha-m" }),
-      reviews: JSON.stringify({ reviews: [] }),
     }),
   });
 
@@ -405,49 +400,6 @@ test("advancePrWatch: count >= limit で awaitingHuman=true + 🆘 通知、2 �
   expect(calls.filter((c) => c.cmd === "gh").length).toBe(ghCallsBefore);
   expect(sos().length).toBe(1);
   expect(commentBodies(calls).length).toBe(comments.length);
-});
-
-// ---- review_rework ----
-
-test("advancePrWatch: changes requested → マーカー persist + triggerLanes[0] へ戻して自動 rework", async () => {
-  const pageId = "page-review-rework";
-  const submittedAt = "2026-07-02T03:00:00Z";
-  const { orch, calls } = setup({
-    pages: {
-      [pageId]: {
-        status: "done",
-        attempt: 1,
-        prUrl: PR_URL,
-        prWatch: { prUrl: PR_URL, phase: "review", autoReworkCount: 2, headSha: "sha-green" },
-        lastEditedTime: "2026-07-01T00:00:00.000Z",
-        updatedAt: "t",
-      },
-    },
-    gh: ghResponder({
-      snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-green", reviewDecision: "CHANGES_REQUESTED", checks: [passCheck("test")] }),
-      reviews: JSON.stringify({
-        reviews: [{ author: { login: "reviewer1" }, state: "CHANGES_REQUESTED", body: "命名を直してください", submittedAt }],
-      }),
-    }),
-    ntn: (args) => {
-      if (args[0] === "api" && args[1]?.startsWith("/v1/pages/") && !args.includes("PATCH")) {
-        return ok(JSON.stringify(pageJson(pageId, "Human Review")));
-      }
-      return undefined;
-    },
-  });
-
-  await orch.tick();
-
-  const ps = orch.getState().pages[pageId];
-  expect(ps?.prWatch?.handledReviewAt).toBe(submittedAt);
-  expect(ps?.prWatch?.autoReworkCount).toBe(0);
-  expect(patchBodies(calls).some((b) => b.includes('"Status"') && b.includes("In Progress"))).toBe(true);
-
-  await waitForStatus(orch, pageId, "retry_queued");
-  const after = orch.getState().pages[pageId];
-  expect(after?.status).toBe("retry_queued");
-  expect(after?.prWatch?.handledReviewAt).toBe(submittedAt);
 });
 
 // ---- スロット満杯時の持ち越し ----

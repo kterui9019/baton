@@ -17,10 +17,8 @@ export interface PrWatchState {
   headSha?: string;
   /** この SHA の CI 失敗は対応済み（再発火防止）。 */
   reworkedSha?: string;
-  /** CI 起因 rework 累計。human/review rework で 0 リセット。 */
+  /** CI 起因 rework 累計。human rework で 0 リセット。 */
   autoReworkCount: number;
-  /** 処理済み CHANGES_REQUESTED の最新 submittedAt。 */
-  handledReviewAt?: string;
   /** 上限到達。人間編集（human rework）でのみ解除。 */
   awaitingHuman?: boolean;
 }
@@ -84,8 +82,8 @@ export function emptyState(): StateFile {
 /**
  * PR 監視状態を（再）アームする。
  * - autoReworkCount: keepCount=true（ci_failure rework の成功）のときのみ維持。
- *   human/review rework・初回成功は 0 リセット。
- * - reworkedSha / handledReviewAt は常に引き継ぐ（同一 SHA 再発火防止・処理済みレビュー再発火防止のため）。
+ *   human rework・初回成功は 0 リセット。
+ * - reworkedSha は常に引き継ぐ（同一 SHA の CI 失敗再発火防止のため）。
  * - awaitingHuman は引き継がない（rework 成功 = 人間介入の結果として自然解除）。
  */
 export function rearmPrWatch(
@@ -98,7 +96,6 @@ export function rearmPrWatch(
     phase: "ci",
     autoReworkCount: keepCount ? (prev?.autoReworkCount ?? 0) : 0,
     reworkedSha: prev?.reworkedSha,
-    handledReviewAt: prev?.handledReviewAt,
   };
 }
 

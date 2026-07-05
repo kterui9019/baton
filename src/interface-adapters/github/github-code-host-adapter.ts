@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PrCheck, PrSnapshot, ReviewInfo } from "../../domain/review.ts";
+import type { PrCheck, PrSnapshot } from "../../domain/review.ts";
 import { runCommand } from "../../infrastructure/process-runner.ts";
 import type { CommandRunner } from "../../infrastructure/process-runner.ts";
 import type { CodeHostPort } from "../../use-cases/ports/code-host-port.ts";
@@ -76,12 +76,11 @@ function normalizeCheck(raw: unknown): PrCheck {
 const GhPrViewSchema = z.object({
   state: z.enum(["OPEN", "MERGED", "CLOSED"]),
   mergedAt: z.string().nullish(),
-  reviewDecision: z.string().optional(),
   headRefOid: z.string().optional(),
   statusCheckRollup: z.array(z.unknown()).nullish(),
 });
 
-/** `gh pr view --json state,mergedAt,reviewDecision,statusCheckRollup,headRefOid` の出力をパースする。不正入力は null。 */
+/** `gh pr view --json state,mergedAt,statusCheckRollup,headRefOid` の出力をパースする。不正入力は null。 */
 export function parsePrSnapshot(json: unknown): PrSnapshot | null {
   const parsed = GhPrViewSchema.safeParse(json);
   if (!parsed.success) return null;
@@ -93,41 +92,9 @@ export function parsePrSnapshot(json: unknown): PrSnapshot | null {
   return {
     state,
     headSha: j.headRefOid ?? "",
-    reviewDecision: j.reviewDecision ?? "",
     checks,
   };
 }
-
-const GhReviewsResponseSchema = z.object({
-  reviews: z
-    .array(
-      z.object({
-        author: z.object({ login: z.string().optional() }).optional(),
-        state: z.string().optional(),
-        body: z.string().optional(),
-        submittedAt: z.string().optional(),
-      }),
-    )
-    .optional(),
-});
-
-/** `gh pr view --json reviews` の出力をパースする。 */
-export function parseReviews(json: unknown): ReviewInfo[] {
-  const parsed = GhReviewsResponseSchema.safeParse(json);
-  if (!parsed.success || !parsed.data.reviews) return [];
-  return parsed.data.reviews.map((r) => ({
-    author: r.author?.login ?? "",
-    state: r.state ?? "",
-    body: r.body ?? "",
-    submittedAt: r.submittedAt ?? "",
-  }));
-}
-
-const GhInlineCommentSchema = z.object({
-  user: z.object({ login: z.string().optional() }).optional(),
-  body: z.string().optional(),
-  created_at: z.string().optional(),
-});
 
 export function extractRunId(detailsUrl: string | undefined): string | null {
   if (!detailsUrl) return null;
@@ -164,18 +131,6 @@ export function createGitHubCodeHostAdapter(
 ): CodeHostPort {
   const timeoutMs = opts.timeoutMs ?? GH_TIMEOUT_MS;
 
-  async function ghStdout(args: string[]): Promise<string> {
-    const res = await run(opts.ghCommand, args, { timeoutMs });
-    if (res.code !== 0) {
-      throw new Error(
-        `gh ${args.join(" ")} が失敗 (code=${res.code}${
-          res.timedOut ? ", timedOut" : ""
-        }): ${res.stderr.trim() || res.stdout.trim()}`,
-      );
-    }
-    return res.stdout;
-  }
-
   async function fetchPrSnapshot(prUrl: string): Promise<PrSnapshot | null> {
     try {
       const res = await run(
@@ -185,7 +140,7 @@ export function createGitHubCodeHostAdapter(
           "view",
           prUrl,
           "--json",
-          "state,mergedAt,reviewDecision,statusCheckRollup,headRefOid",
+          "state,mergedAt,statusCheckRollup,headRefOid",
         ],
         { timeoutMs },
       );
@@ -193,36 +148,6 @@ export function createGitHubCodeHostAdapter(
       return parsePrSnapshot(JSON.parse(res.stdout));
     } catch {
       return null;
-    }
-  }
-
-  async function fetchReviews(prUrl: string): Promise<ReviewInfo[]> {
-    const stdout = await ghStdout(["pr", "view", prUrl, "--json", "reviews"]);
-    return parseReviews(JSON.parse(stdout));
-  }
-
-  async function fetchInlineComments(prUrl: string): Promise<ReviewInfo[]> {
-    const slug = repoSlugFromPrUrl(prUrl);
-    if (!slug) return [];
-    try {
-      const stdout = await ghStdout([
-        "api",
-        `repos/${slug.owner}/${slug.repo}/pulls/${slug.number}/comments`,
-      ]);
-      const parsedArray = z.array(z.unknown()).safeParse(JSON.parse(stdout));
-      if (!parsedArray.success) return [];
-      return parsedArray.data.map((c) => {
-        const parsed = GhInlineCommentSchema.safeParse(c);
-        const d = parsed.success ? parsed.data : {};
-        return {
-          author: d.user?.login ?? "",
-          state: "INLINE",
-          body: d.body ?? "",
-          submittedAt: d.created_at ?? "",
-        };
-      });
-    } catch {
-      return [];
     }
   }
 
@@ -266,5 +191,5 @@ export function createGitHubCodeHostAdapter(
     return truncateLog(sections.join("\n\n"), TOTAL_LOG_CHARS);
   }
 
-  return { fetchPrSnapshot, fetchReviews, fetchInlineComments, fetchFailedCheckLogs };
+  return { fetchPrSnapshot, fetchFailedCheckLogs };
 }

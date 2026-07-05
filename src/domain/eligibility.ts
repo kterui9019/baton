@@ -34,19 +34,13 @@ export type RunPlan =
 
 /**
  * dispatch 実行の入力 ADT。RunPlan の上位集合で、advancePrWatch から発火する
- * CI/レビュー起因の自動 rework を追加したもの。ci_failure / review_changes は
- * 「上限まで自動でやり直す」経路なので、そのメタ情報（失敗チェックのログ・
- * レビューコメント一覧）を variant ごとに持つ。
+ * CI 起因の自動 rework を追加したもの。ci_failure は「上限まで自動でやり直す」
+ * 経路なので、そのメタ情報（失敗チェックのログ）を持つ。
  */
 export type ResumeInput =
   | { kind: "human_rework"; from: PageState }
   | { kind: "needs_info_answer"; from: NeedsInfoState }
-  | { kind: "ci_failure"; from: PageState; ciFailures?: string }
-  | {
-      kind: "review_changes";
-      from: PageState;
-      reviews?: Array<{ author: string; body: string; submittedAt: string }>;
-    };
+  | { kind: "ci_failure"; from: PageState; ciFailures?: string };
 
 /** eligibility 判定の結果 ADT。false 側だけが needsCommentCheck を持ちうる。 */
 export type EligibilityDecision =
@@ -55,7 +49,7 @@ export type EligibilityDecision =
 
 /** resume（rework / CI 修正 / レビュー対応 / 質問回答）実行に引き継ぐ前回実行のコンテキスト。 */
 export interface ResumeContext {
-  kind: "human_rework" | "ci_failure" | "review_changes" | "needs_info_answer";
+  kind: "human_rework" | "ci_failure" | "needs_info_answer";
   /** 前回作成した PR（同じ PR を更新させるためプロンプトへ渡す）。 */
   prUrl?: string;
   /** 基準時刻（done/failed 記録時刻 or questionAskedAt）。これより新しいコメントを拾う。 */
@@ -64,8 +58,6 @@ export interface ResumeContext {
   question?: string;
   /** ci_failure 用: 失敗 check の要約 + ログ。 */
   ciFailures?: string;
-  /** review_changes 用: CHANGES_REQUESTED レビュー一覧。 */
-  reviews?: Array<{ author: string; body: string; submittedAt: string }>;
 }
 
 /** resume種別がネイティブセッション継続（CLIの--resume相当）の対象かどうか。human_reworkのみ新規セッション扱い。 */
@@ -96,12 +88,6 @@ export function buildResumeContext(input: ResumeInput): ResumeContext {
       prUrl: from.prUrl,
       since: from.lastEditedTime,
       ciFailures,
-    }))
-    .with({ kind: "review_changes" }, ({ from, reviews }) => ({
-      kind: "review_changes" as const,
-      prUrl: from.prUrl,
-      since: from.lastEditedTime,
-      reviews,
     }))
     .exhaustive();
 }

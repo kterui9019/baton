@@ -12,7 +12,7 @@ import { hhmm } from "../infrastructure/format.ts";
 export function activityStart(opts: {
   agentLabel: string;
   attempt: number;
-  resumeKind: "human_rework" | "ci_failure" | "review_changes" | "needs_info_answer" | undefined;
+  resumeKind: "human_rework" | "ci_failure" | "needs_info_answer" | undefined;
 }): string {
   const verb = opts.resumeKind
     ? opts.resumeKind === "needs_info_answer"
