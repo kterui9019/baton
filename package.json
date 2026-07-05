@@ -1,6 +1,6 @@
 {
   "name": "@kterui9019/baton",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Kanban-driven local coding agent orchestrator: move a ticket to In Progress and Claude Code implements it, opens a PR, watches CI, and handles reviews.",
   "type": "module",
   "license": "MIT",
