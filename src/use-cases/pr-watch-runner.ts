@@ -6,7 +6,7 @@ import type { Config } from "../infrastructure/config.ts";
 import { nowIso, oneLine } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { KanbanIo } from "./kanban-io.ts";
-import { activityCiGreen, activityCiLimit, commentCiLimit } from "./messages.ts";
+import { commentCiGreen, commentCiLimit } from "./messages.ts";
 import type { CodeHostPort } from "./ports/code-host-port.ts";
 import type { KanbanPort } from "./ports/kanban-port.ts";
 
@@ -61,7 +61,7 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
           watch,
           autoReworkLimit: c.autoReworkLimit,
         });
-        await handlePrWatchAction(pageId, ps, watch, snapshot.headSha, action);
+        await handlePrWatchAction(pageId, ps, watch, action);
       } catch (err) {
         deps.log.warn("pr_watch", { page_id: pageId, msg: oneLine(String(err)) });
       }
@@ -72,13 +72,12 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
     pageId: string,
     ps: PageState,
     watch: PrWatchState,
-    headSha: string,
   ): Promise<void> {
     const c = deps.cfg();
     const snapshot = await deps.kanban().getPage(pageId);
     const lane = snapshot.ticket.lane;
     const moveLane = lane !== null && c.kanban.triggerLanes.includes(lane);
-    const nextWatch: PrWatchState = { ...watch, phase: "review", headSha };
+    const nextWatch: PrWatchState = { ...watch, phase: "review" };
     deps.getState().pages[pageId] = { ...ps, prWatch: nextWatch, updatedAt: nowIso() };
     deps.persist();
     deps.log.info("pr_watch", {
@@ -87,11 +86,13 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
         moveLane ? `（${c.kanban.doneLane} へ移動）` : `（レーン ${lane} は維持）`
       }: ${watch.prUrl}`,
     });
-    await deps.kanbanIo.safeUpdate("ci_green_update", pageId, (k) =>
-      k.updateTicket(pageId, {
-        ...(moveLane ? { lane: c.kanban.doneLane } : {}),
-        activity: activityCiGreen(),
-      }),
+    if (moveLane) {
+      await deps.kanbanIo.safeUpdate("ci_green_update", pageId, (k) =>
+        k.updateTicket(pageId, { lane: c.kanban.doneLane }),
+      );
+    }
+    await deps.kanbanIo.safeUpdate("ci_green_comment", pageId, (k) =>
+      k.addComment(pageId, commentCiGreen()),
     );
     await deps.kanbanIo.refreshLastEditedTime("ci_green_refresh", pageId, "done");
   }
@@ -138,9 +139,6 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
       page_id: pageId,
       msg: `CI 自動修正が上限 (${watch.autoReworkCount}回) に到達 — 人間待ちへ: ${watch.prUrl}`,
     });
-    await deps.kanbanIo.safeUpdate("ci_limit_update", pageId, (k) =>
-      k.updateTicket(pageId, { activity: activityCiLimit(watch.autoReworkCount) }),
-    );
     await deps.kanbanIo.safeUpdate("ci_limit_comment", pageId, (k) =>
       k.addComment(
         pageId,
@@ -158,11 +156,10 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
     pageId: string,
     ps: PageState,
     watch: PrWatchState,
-    headSha: string,
     action: PrWatchAction,
   ): Promise<void> {
     await match(action)
-      .with({ type: "ci_green" }, () => handleCiGreen(pageId, ps, watch, headSha))
+      .with({ type: "ci_green" }, () => handleCiGreen(pageId, ps, watch))
       .with({ type: "ci_rework" }, (a) => handleCiRework(pageId, ps, watch, a))
       .with({ type: "ci_limit" }, (a) => handleCiLimit(pageId, ps, watch, a))
       .with({ type: "none" }, (a) => {

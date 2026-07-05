@@ -310,9 +310,6 @@ export function createGitHubKanbanAdapter(
     if (update.prUrl !== undefined) {
       await addComment(pageId, `🔗 PR: ${update.prUrl}`);
     }
-    if (update.activity !== undefined) {
-      await addComment(pageId, update.activity);
-    }
   }
 
   return {

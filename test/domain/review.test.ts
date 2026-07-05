@@ -37,14 +37,6 @@ const watch = (over: Partial<PrWatchInput> = {}): PrWatchInput => ({
 const decide = (s: PrSnapshot, w: PrWatchInput, autoReworkLimit = 3) =>
   decidePrWatchAction({ snapshot: s, watch: w, autoReworkLimit });
 
-test("decide: awaitingHuman → none（failure があっても防御）", () => {
-  const a = decide(
-    snap({ checks: [ngCheck] }),
-    watch({ awaitingHuman: true, autoReworkCount: 3 }),
-  );
-  expect(a.type).toBe("none");
-});
-
 test("decide: CI failure → ci_rework（headSha / failedChecks 付き）", () => {
   const a = decide(
     snap({ headSha: "sha-x", checks: [okCheck, ngCheck, wipCheck] }),

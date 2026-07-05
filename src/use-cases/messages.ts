@@ -3,13 +3,14 @@ import type { TicketUpdate } from "../domain/ticket.ts";
 import { hhmm } from "../infrastructure/format.ts";
 
 /**
- * Kanban へ post するアクティビティ 1 行文字列およびコメント本文の生成関数群。
+ * Kanban へ post するコメント本文の生成関数群。
  * すべて純粋関数（日時は hhmm() のみに閉じる）。orchestrator は生成された文字列を
- * KanbanPort.updateTicket / addComment にそのまま渡すだけ。
+ * KanbanPort.updateTicket / addComment にそのまま渡すだけ。進捗はすべてコメントに書く
+ * （プロパティ更新には状態を表さない一過性の文言を持たせない）。
  */
 
-/** dispatch 開始時のアクティビティ。 */
-export function activityStart(opts: {
+/** dispatch 開始時のコメント本文。 */
+export function commentStart(opts: {
   agentLabel: string;
   attempt: number;
   resumeKind: "human_rework" | "ci_failure" | "needs_info_answer" | undefined;
@@ -24,14 +25,12 @@ export function activityStart(opts: {
 
 /**
  * 成功時に KanbanPort.updateTicket に渡す TicketUpdate を組む。
- * - PR あり: prUrl + "CI 待ち" アクティビティ（レーンは動かさない → 監視継続）
- * - PR なし: doneLane 移動 + "完了（PRなし）" アクティビティ
+ * - PR あり: prUrl（レーンは動かさない → 監視継続）
+ * - PR なし: doneLane 移動
  */
 export function ticketUpdateSuccess(prUrl: string | undefined, doneLane: string): TicketUpdate {
-  if (prUrl) {
-    return { prUrl, activity: `✅ PR 作成完了 — CI 待ち (${hhmm()})` };
-  }
-  return { lane: doneLane, activity: `✅ 完了（PRなし） — ${hhmm()}` };
+  if (prUrl) return { prUrl };
+  return { lane: doneLane };
 }
 
 /** リカバリ経由での成功時に渡す TicketUpdate。 */
@@ -39,41 +38,18 @@ export function ticketUpdateRecoveredSuccess(
   prUrl: string | undefined,
   doneLane: string,
 ): TicketUpdate {
-  if (prUrl) {
-    return {
-      prUrl,
-      activity: `✅ PR 作成完了（再起動時に確定） — CI 待ち (${hhmm()})`,
-    };
-  }
-  return {
-    lane: doneLane,
-    activity: `✅ 完了（PRなし・再起動時に確定） — ${hhmm()}`,
-  };
+  if (prUrl) return { prUrl };
+  return { lane: doneLane };
 }
 
-/** リトライ待機時のアクティビティ。 */
-export function activityRetry(attempt: number, maxAttempts: number, shortReason: string): string {
+/** リトライ待機時のコメント本文。 */
+export function commentRetry(attempt: number, maxAttempts: number, shortReason: string): string {
   return `⚠️ 失敗 (attempt ${attempt}/${maxAttempts})、リトライ待ち: ${shortReason}`;
 }
 
-/** 上限到達時のアクティビティ。 */
-export function activityFailed(attempt: number, maxAttempts: number, shortReason: string): string {
-  return `❌ 失敗 (attempt ${attempt}/${maxAttempts}): ${shortReason}`;
-}
-
-/** needs_info 通知時のアクティビティ。 */
-export function activityNeedsInfo(recovered: boolean): string {
-  return `❓ 要回答 — 質問をコメントに投稿${recovered ? "（再起動時に確定）" : ""} — ${hhmm()}`;
-}
-
-/** CI green 検知時のアクティビティ。 */
-export function activityCiGreen(): string {
+/** CI green 検知時のコメント本文。 */
+export function commentCiGreen(): string {
   return `✅ CI グリーン — レビュー待ち (${hhmm()})`;
-}
-
-/** CI 自動修正上限到達時のアクティビティ。 */
-export function activityCiLimit(count: number): string {
-  return `🆘 CI 自動修正が上限 (${count}回) に到達 — 人間の対応が必要 — ${hhmm()}`;
 }
 
 /** 成功時のコメント本文。 */

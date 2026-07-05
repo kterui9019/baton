@@ -46,7 +46,7 @@ test("resolveResumePlan: 記録済み session_id が無ければ resume種別で
   expect(plan.useNativeResume).toBe(false);
 });
 
-const cfg = { triggerLanes: ["In Progress"], conditionValue: "Local" };
+const cfg = {};
 
 function ticket(over: Partial<Ticket> = {}): Ticket {
   return {
@@ -196,10 +196,8 @@ test("retry_queued: 未満了はスキップ", () => {
   expect(d.eligible).toBe(false);
 });
 
-test("レーン対象外 / リポジトリ未設定 / 条件不一致はスキップ", () => {
-  expect(decide(ticket({ lane: "Human Review" })).eligible).toBe(false);
+test("リポジトリ未設定はスキップ", () => {
   expect(decide(ticket({ repo: null })).eligible).toBe(false);
-  expect(decide(ticket({ condition: "Cloud" })).eligible).toBe(false);
 });
 
 function needsInfoState(over: Partial<PageState> = {}): PageState {

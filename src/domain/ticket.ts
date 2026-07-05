@@ -27,7 +27,6 @@ export interface CommentInfo {
 export interface TicketUpdate {
   lane?: string;
   prUrl?: string;
-  activity?: string;
 }
 
 /**

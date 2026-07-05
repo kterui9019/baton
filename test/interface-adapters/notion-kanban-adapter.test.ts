@@ -9,7 +9,6 @@ import {
   parseComments,
   parseTicket,
   plainText,
-  richTextProp,
   statusProp,
 } from "../../src/interface-adapters/notion/notion-kanban-adapter.ts";
 import { KanbanPageNotFoundError } from "../../src/domain/errors.ts";
@@ -88,11 +87,11 @@ test("parseTicket: config 化されたプロパティ名で読み取る", () => 
 test("compactProps: 空キーと undefined 値のエントリを除外", () => {
   const props = compactProps([
     ["PR", linkProp("https://u")],
-    ["", richTextProp("skip")],
-    ["Activity", richTextProp("done")],
-    ["Status", undefined],
+    ["", statusProp("skip")],
+    ["Status", statusProp("Done")],
+    ["Repo", undefined],
   ]);
-  expect(Object.keys(props)).toEqual(["PR", "Activity"]);
+  expect(Object.keys(props)).toEqual(["PR", "Status"]);
   expect(props["PR"]).toEqual(linkProp("https://u"));
 });
 
@@ -120,7 +119,6 @@ test("buildCandidateFilter: 複数 triggerLanes で or 展開", () => {
 });
 
 test("プロパティビルダー", () => {
-  expect(richTextProp("x")).toEqual({ rich_text: [{ text: { content: "x" } }] });
   expect(linkProp("https://u")).toEqual({
     rich_text: [{ text: { content: "https://u", link: { url: "https://u" } } }],
   });
@@ -190,12 +188,11 @@ test("getPage: not_found エラーは KanbanPageNotFoundError", async () => {
 test("updateTicket: TicketUpdate を単一 PATCH の Notion properties へマッピング", async () => {
   const { run, calls } = mockRunner(() => okResult("{}"));
   const adapter = createNotionKanbanAdapter(DEFAULT_CONFIG, run);
-  await adapter.updateTicket("page-1", { prUrl: "https://github.com/o/r/pull/1", activity: "done" });
+  await adapter.updateTicket("page-1", { prUrl: "https://github.com/o/r/pull/1" });
   const patch = calls.find((c) => c.includes("PATCH"));
   expect(patch).toBeDefined();
   const body = JSON.parse(patch![patch!.indexOf("-d") + 1]!);
   expect(body.properties["PR"]).toEqual(linkProp("https://github.com/o/r/pull/1"));
-  expect(body.properties["Activity"]).toEqual(richTextProp("done"));
   expect(body.properties["Status"]).toBeUndefined();
 });
 

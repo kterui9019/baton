@@ -4,9 +4,6 @@ import type { Ticket } from "./ticket.ts";
 
 /** decideEligibility が必要とする設定値のみを narrow に受け取る（Config 全体には依存しない）。 */
 export interface EligibilityConfig {
-  triggerLanes: string[];
-  /** null は「condition チェックなし」（例: GitHub provider は Ticket.condition が常に null）。 */
-  conditionValue: string | null;
   /**
    * true のとき operatorUserId と ticket.authorId が一致するチケットのみ dispatch 対象。
    * 未指定時はフィルタなし（テスト互換）。
@@ -130,8 +127,6 @@ export function resolveResumePlan(
 
 /**
  * ディスパッチ可否判定（純粋関数）。
- * 候補クエリ自体がレーン/実行環境でフィルタ済みだが、config 再読込との
- * ずれに備えてここでも検証する。
  *
  * done の再実行（rework）: 成功時に記録した lastEditedTime よりページの
  * last_edited_time が進んでいれば「人間がカードを触って差し戻した」とみなす。
@@ -162,12 +157,6 @@ export function decideEligibility(opts: {
     }
   }
   if (!t.repo) return { eligible: false, reason: "リポジトリ未設定" };
-  if (!t.lane || !cfg.triggerLanes.includes(t.lane)) {
-    return { eligible: false, reason: `レーン対象外(${t.lane})` };
-  }
-  if (t.condition !== cfg.conditionValue) {
-    return { eligible: false, reason: `条件不一致(${t.condition})` };
-  }
   if (isActive) {
     return { eligible: false, reason: "処理中" };
   }

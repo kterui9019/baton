@@ -14,7 +14,6 @@ export type PageStatus =
 export interface PrWatchState {
   prUrl: string;
   phase: "ci" | "review";
-  headSha?: string;
   /** この SHA の CI 失敗は対応済み（再発火防止）。 */
   reworkedSha?: string;
   /** CI 起因 rework 累計。human rework で 0 リセット。 */
@@ -124,8 +123,9 @@ export function toDone(opts: {
   prUrl: string | undefined;
   keepPrWatchCount: boolean;
   sessionId: string | undefined;
+  ticketLastEditedTime: string | undefined;
 }): PageState {
-  const { prev, attempt, workspace: ws, prUrl, keepPrWatchCount, sessionId } = opts;
+  const { prev, attempt, workspace: ws, prUrl, keepPrWatchCount, sessionId, ticketLastEditedTime } = opts;
   return {
     status: "done",
     attempt,
@@ -135,7 +135,7 @@ export function toDone(opts: {
     prUrl,
     prWatch: prUrl ? rearmPrWatch(prev?.prWatch, prUrl, keepPrWatchCount) : undefined,
     sessionId: sessionId ?? prev?.sessionId,
-    lastEditedTime: prev?.lastEditedTime,
+    lastEditedTime: ticketLastEditedTime,
     updatedAt: nowIso(),
   };
 }

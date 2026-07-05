@@ -11,12 +11,14 @@ export interface PrSnapshot {
   checks: PrCheck[];
 }
 
-/** state.ts の PrWatchState と構造互換の narrow な入力型（domain 内部の相互依存を避けるため独立させている）。 */
+/**
+ * state.ts の PrWatchState と構造互換の narrow な入力型（domain 内部の相互依存を避けるため独立させている）。
+ * awaitingHuman な watch は呼び出し側（advancePrWatch）が渡さない前提。
+ */
 export interface PrWatchInput {
   phase: "ci" | "review";
   reworkedSha?: string;
   autoReworkCount: number;
-  awaitingHuman?: boolean;
 }
 
 /** PR 監視 1 回分の判定結果。 */
@@ -44,7 +46,7 @@ export function summarizeChecks(checks: PrCheck[]): {
 
 /**
  * PR 監視 1 回分の判定（純粋関数・判定の中核）。
- * 優先順: awaitingHuman → CI failure → CI pending → 全 green。
+ * 優先順: CI failure → CI pending → 全 green。
  * PR のマージ/クローズ検知は行わない（監視終了は Kanban 側の terminalLanes 到達に委ねる）。
  * 複数の入力値にまたがる優先順位付きガードのため、判別子1つに対する
  * 網羅マッチである ts-pattern は当てはめず、素直な早期 return で表現する。
@@ -55,9 +57,6 @@ export function decidePrWatchAction(opts: {
   autoReworkLimit: number;
 }): PrWatchAction {
   const { snapshot, watch, autoReworkLimit } = opts;
-
-  // 呼び出し側もフィルタするが防御
-  if (watch.awaitingHuman) return { type: "none", reason: "awaiting human" };
 
   const summary = summarizeChecks(snapshot.checks);
   if (summary.failure > 0) {

@@ -174,21 +174,17 @@ test("updateTicket({lane}): 既存 status:* ラベルを外して新規追加す
   expect(editCall).not.toContain("bug");
 });
 
-test("updateTicket({prUrl, activity}): 2 件のコメントとして追記", async () => {
+test("updateTicket({prUrl}): PR リンクをコメントとして追記", async () => {
   const cfg = withGithub();
   const { run, calls } = mockRunner(() => okResult(""));
   const adapter = createGitHubKanbanAdapter(cfg, run);
   await adapter.updateTicket("acme/baton#7", {
     prUrl: "https://github.com/acme/baton/pull/42",
-    activity: "✅ 完了",
   });
-  expect(calls).toHaveLength(2);
-  for (const c of calls) {
-    expect(c.slice(0, 5)).toEqual(["issue", "comment", "7", "--repo", "acme/baton"]);
-  }
-  const bodies = calls.map((c) => c[c.indexOf("--body") + 1]);
-  expect(bodies).toContain("🔗 PR: https://github.com/acme/baton/pull/42");
-  expect(bodies).toContain("✅ 完了");
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.slice(0, 5)).toEqual(["issue", "comment", "7", "--repo", "acme/baton"]);
+  const body = calls[0]![calls[0]!.indexOf("--body") + 1];
+  expect(body).toBe("🔗 PR: https://github.com/acme/baton/pull/42");
 });
 
 test("updateTicket({lane}): 目的の lane がすでに付いていて他の status ラベルがない場合は no-op", async () => {

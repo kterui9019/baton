@@ -24,12 +24,10 @@ import type { AgentHandle } from "../infrastructure/process-runner.ts";
 import type { KanbanIo } from "./kanban-io.ts";
 import type { RunningEntry } from "./lifecycle-runner.ts";
 import {
-  activityFailed,
-  activityNeedsInfo,
-  activityRetry,
-  activityStart,
   commentFailed,
   commentNeedsInfo,
+  commentRetry,
+  commentStart,
   commentSuccess,
   ticketUpdateSuccess,
 } from "./messages.ts";
@@ -174,6 +172,7 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
       prUrl,
       keepPrWatchCount: resume?.kind === "ci_failure",
       sessionId,
+      ticketLastEditedTime: ticket.lastEditedTime,
     });
     deps.persist();
     deps.log.info("success", { page_id: ticket.pageId, msg: prUrl ?? "(PRなし)" });
@@ -213,9 +212,6 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
       page_id: ticket.pageId,
       msg: `質問を投稿して回答待ちへ: ${oneLine(question, 160)}`,
     });
-    await deps.kanbanIo.safeUpdate("needs_info_update", ticket.pageId, (k) =>
-      k.updateTicket(ticket.pageId, { activity: activityNeedsInfo(false) }),
-    );
     await deps.kanbanIo.safeUpdate("needs_info_comment", ticket.pageId, (k) =>
       k.addComment(
         ticket.pageId,
@@ -250,8 +246,8 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
         page_id: ticket.pageId,
         msg: `attempt ${attempt}/${max}, ${Math.round(delay / 1000)}s 後に再試行: ${shortReason}`,
       });
-      await deps.kanbanIo.safeUpdate("retry_update", ticket.pageId, (k) =>
-        k.updateTicket(ticket.pageId, { activity: activityRetry(attempt, max, shortReason) }),
+      await deps.kanbanIo.safeUpdate("retry_comment", ticket.pageId, (k) =>
+        k.addComment(ticket.pageId, commentRetry(attempt, max, shortReason)),
       );
       return;
     }
@@ -264,9 +260,6 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
     });
     deps.persist();
     deps.log.error("failed", { page_id: ticket.pageId, msg: `attempt ${attempt}/${max}: ${shortReason}` });
-    await deps.kanbanIo.safeUpdate("failed_update", ticket.pageId, (k) =>
-      k.updateTicket(ticket.pageId, { activity: activityFailed(attempt, max, shortReason) }),
-    );
     const logTail = readLogTail(logFile);
     await deps.kanbanIo.safeUpdate("failed_comment", ticket.pageId, (k) =>
       k.addComment(
@@ -279,13 +272,7 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
 
   function eligibilityCfg(operatorUserId: string | null) {
     const c = deps.cfg();
-    // GitHub provider は condition フィルタを queryCandidates の --label で消化済みで
-    // Ticket.condition は常に null（github-kanban-adapter.ts 参照）のため、
-    // conditionValue も null にして常に一致させる（Notion 用の "Local" と比較しない）。
-    const conditionValue = c.kanban.provider === "github" ? null : c.kanban.notion.conditionValue;
     return {
-      triggerLanes: c.kanban.triggerLanes,
-      conditionValue,
       onlyOwnTickets: c.onlyOwnTickets,
       operatorUserId,
     };
@@ -325,17 +312,6 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
   ): void {
     const c = deps.cfg();
     const state = deps.getState();
-    for (const t of candidates) {
-      const ps = state.pages[t.pageId];
-      if (ps?.status === "done" && !ps.lastEditedTime && t.lastEditedTime) {
-        state.pages[t.pageId] = { ...ps, lastEditedTime: t.lastEditedTime, updatedAt: nowIso() };
-        deps.persist();
-        deps.log.info("candidates", {
-          page_id: t.pageId,
-          msg: "done の基準時刻をバックフィル（今回はスキップ）",
-        });
-      }
-    }
     const eligible = candidates
       .map((t) => ({
         t,
@@ -399,14 +375,15 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
       page_id: ticket.pageId,
       msg: `${ticket.title} (attempt ${attempt}${resume ? `, resume:${resume.kind}` : ""})`,
     });
-    await deps.kanbanIo.safeUpdate("claim_update", ticket.pageId, (k) =>
-      k.updateTicket(ticket.pageId, {
-        activity: activityStart({
+    await deps.kanbanIo.safeUpdate("claim_comment", ticket.pageId, (k) =>
+      k.addComment(
+        ticket.pageId,
+        commentStart({
           agentLabel: AGENT_LABELS[c.agent.provider],
           attempt,
           resumeKind: resume?.kind,
         }),
-      }),
+      ),
     );
     const prepRes = await prepareWorkspace(ticket, entry);
     if (prepRes.type === "err") {

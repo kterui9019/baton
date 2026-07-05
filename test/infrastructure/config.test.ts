@@ -72,7 +72,6 @@ test("DEFAULT_CONFIG: 新規フィールドのデフォルト値", () => {
   expect(DEFAULT_CONFIG.kanban.notion.conditionProperty).toBe("Condition");
   expect(DEFAULT_CONFIG.kanban.notion.conditionValue).toBe("Local");
   expect(DEFAULT_CONFIG.kanban.notion.prProperty).toBe("PR");
-  expect(DEFAULT_CONFIG.kanban.notion.activityProperty).toBe("Activity");
   expect(DEFAULT_CONFIG.ghCommand).toBe("gh");
   expect(DEFAULT_CONFIG.prPollIntervalMs).toBe(60_000);
   expect(DEFAULT_CONFIG.autoReworkLimit).toBe(3);

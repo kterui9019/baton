@@ -14,7 +14,6 @@ import { nowIso, oneLine } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { KanbanIo } from "./kanban-io.ts";
 import {
-  activityNeedsInfo,
   commentNeedsInfo,
   commentRecoveredSuccess,
   ticketUpdateRecoveredSuccess,
@@ -59,9 +58,6 @@ export function createStartupRecovery(
   }
 
   async function notifyNeedsInfo(pageId: string, question: string): Promise<void> {
-    await deps.kanbanIo.safeUpdate("recovered_needs_info_update", pageId, (k) =>
-      k.updateTicket(pageId, { activity: activityNeedsInfo(true) }),
-    );
     await deps.kanbanIo.safeUpdate("recovered_needs_info_comment", pageId, (k) =>
       k.addComment(pageId, commentNeedsInfo({ question, recovered: true, sessionId: undefined })),
     );

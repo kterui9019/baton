@@ -123,10 +123,6 @@ export function buildCandidateFilter(config: Config): unknown {
   };
 }
 
-export function richTextProp(content: string): unknown {
-  return { rich_text: [{ text: { content } }] };
-}
-
 export function linkProp(url: string): unknown {
   return { rich_text: [{ text: { content: url, link: { url } } }] };
 }
@@ -251,10 +247,6 @@ export function createNotionKanbanAdapter(
         [
           config.kanban.notion.prProperty,
           update.prUrl !== undefined ? linkProp(update.prUrl) : undefined,
-        ],
-        [
-          config.kanban.notion.activityProperty,
-          update.activity !== undefined ? richTextProp(update.activity) : undefined,
         ],
       ]),
     );

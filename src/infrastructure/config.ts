@@ -48,8 +48,6 @@ const notionKanbanSchema = z
     conditionValue: z.string().default("Local"),
     /** PR リンク (rich_text) プロパティ名。"" なら読み書きをスキップ。 */
     prProperty: z.string().default("PR"),
-    /** アクティビティ (rich_text) プロパティ名。"" なら読み書きをスキップ。 */
-    activityProperty: z.string().default("Activity"),
     ntnCommand: z.string().default("ntn"),
   })
   .prefault({});
