@@ -80,8 +80,6 @@ const kanbanSchema = z
     provider: kanbanProviderSchema.default("notion"),
     triggerLanes: z.array(z.string()).default(["In Progress"]),
     doneLane: z.string().default("Human Review"),
-    /** PR マージ検知時に移動するレーン。 */
-    mergedLane: z.string().default("In Delivery"),
     terminalLanes: z.array(z.string()).default(["Released", "Canceled"]),
     notion: notionKanbanSchema,
     github: githubKanbanSchema,

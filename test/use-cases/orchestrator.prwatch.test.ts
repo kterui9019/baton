@@ -102,15 +102,8 @@ function pageJson(pageId: string, lane: string, repo = "repoX") {
   };
 }
 
-function ghSnapshot(o: {
-  state: "OPEN" | "MERGED" | "CLOSED";
-  headSha: string;
-  checks?: unknown[];
-  mergedAt?: string;
-}): string {
+function ghSnapshot(o: { headSha: string; checks?: unknown[] }): string {
   return JSON.stringify({
-    state: o.state,
-    mergedAt: o.mergedAt ?? null,
     statusCheckRollup: o.checks ?? [],
     headRefOid: o.headSha,
   });
@@ -131,7 +124,7 @@ const failCheck = (name: string, runId = "123") => ({
   detailsUrl: `https://github.com/o/r/actions/runs/${runId}/job/9`,
 });
 
-const SNAPSHOT_FIELDS = "state,mergedAt,statusCheckRollup,headRefOid";
+const SNAPSHOT_FIELDS = "statusCheckRollup,headRefOid";
 
 function ghResponder(o: { snapshot: string; runLog?: string }): Responder {
   return (args) => {
@@ -215,7 +208,7 @@ test("advancePrWatch: CI 全 green → doneLane PATCH + phase=review", async () 
         updatedAt: "t",
       },
     },
-    gh: ghResponder({ snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-green", checks: [passCheck("test"), passCheck("lint")] }) }),
+    gh: ghResponder({ snapshot: ghSnapshot({ headSha: "sha-green", checks: [passCheck("test"), passCheck("lint")] }) }),
     ntn: (args) => {
       if (args[0] === "api" && args[1]?.startsWith("/v1/pages/") && !args.includes("PATCH")) {
         return ok(JSON.stringify(pageJson(pageId, "In Progress")));
@@ -242,7 +235,7 @@ test("advancePrWatch: CI green だが人間がレーンを動かしていたら�
     pages: {
       [pageId]: { status: "done", attempt: 1, prUrl: PR_URL, prWatch: { prUrl: PR_URL, phase: "ci", autoReworkCount: 0 }, updatedAt: "t" },
     },
-    gh: ghResponder({ snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-green", checks: [passCheck("test")] }) }),
+    gh: ghResponder({ snapshot: ghSnapshot({ headSha: "sha-green", checks: [passCheck("test")] }) }),
     ntn: (args) => {
       if (args[0] === "api" && args[1]?.startsWith("/v1/pages/") && !args.includes("PATCH")) {
         return ok(JSON.stringify(pageJson(pageId, "Blocked")));
@@ -260,52 +253,7 @@ test("advancePrWatch: CI green だが人間がレーンを動かしていたら�
   }
 });
 
-// ---- 3. advancePrWatch: merged ----
-
-test("advancePrWatch: merged → mergedLane PATCH + prWatch 削除 + コメント", async () => {
-  const pageId = "page-merged";
-  const { orch, calls } = setup({
-    pages: {
-      [pageId]: { status: "done", attempt: 1, prUrl: PR_URL, prWatch: { prUrl: PR_URL, phase: "review", autoReworkCount: 1 }, updatedAt: "t" },
-    },
-    gh: ghResponder({
-      snapshot: ghSnapshot({ state: "MERGED", mergedAt: "2026-07-02T01:00:00Z", headSha: "sha-m" }),
-    }),
-  });
-
-  await orch.tick();
-
-  const ps = orch.getState().pages[pageId];
-  expect(ps?.status).toBe("done");
-  expect(ps?.prWatch).toBeUndefined();
-  const patches = patchBodies(calls);
-  expect(patches.some((b) => b.includes("In Delivery"))).toBe(true);
-  expect(patches.some((b) => b.includes("マージ検知"))).toBe(true);
-  const comments = commentBodies(calls);
-  expect(comments.some((b) => b.includes("マージ") && b.includes(PR_URL))).toBe(true);
-});
-
-test("advancePrWatch: closed(unmerged) → 通知のみ・レーン維持・prWatch 削除", async () => {
-  const pageId = "page-closed";
-  const { orch, calls } = setup({
-    pages: {
-      [pageId]: { status: "done", attempt: 1, prUrl: PR_URL, prWatch: { prUrl: PR_URL, phase: "ci", autoReworkCount: 0 }, updatedAt: "t" },
-    },
-    gh: ghResponder({ snapshot: ghSnapshot({ state: "CLOSED", headSha: "sha-c" }) }),
-  });
-
-  await orch.tick();
-
-  expect(orch.getState().pages[pageId]?.prWatch).toBeUndefined();
-  const patches = patchBodies(calls);
-  expect(patches.some((b) => b.includes("クローズ"))).toBe(true);
-  for (const body of patches) {
-    expect(body).not.toContain('"Status"');
-  }
-  expect(commentBodies(calls).some((b) => b.includes("クローズ"))).toBe(true);
-});
-
-// ---- 4. advancePrWatch: CI failed → マーカー persist + dispatchAutoRework ----
+// ---- 3. advancePrWatch: CI failed → マーカー persist + dispatchAutoRework ----
 
 test("advancePrWatch: CI failed → reworkedSha/count を先に persist し dispatchAutoRework が claim まで到達", async () => {
   const pageId = "page-ci-fail";
@@ -321,7 +269,7 @@ test("advancePrWatch: CI failed → reworkedSha/count を先に persist し disp
       },
     },
     gh: ghResponder({
-      snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-fail", checks: [failCheck("test", "123"), passCheck("lint")] }),
+      snapshot: ghSnapshot({ headSha: "sha-fail", checks: [failCheck("test", "123"), passCheck("lint")] }),
       runLog: "FAIL src/foo.test.ts",
     }),
     ntn: (args) => {
@@ -362,7 +310,7 @@ test("advancePrWatch: 同一 SHA の CI 失敗（reworkedSha 一致）は再発�
         updatedAt: "t",
       },
     },
-    gh: ghResponder({ snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-fail", checks: [failCheck("test")] }) }),
+    gh: ghResponder({ snapshot: ghSnapshot({ headSha: "sha-fail", checks: [failCheck("test")] }) }),
   });
 
   await orch.tick();
@@ -373,7 +321,7 @@ test("advancePrWatch: 同一 SHA の CI 失敗（reworkedSha 一致）は再発�
   expect(patchBodies(calls).length).toBe(0);
 });
 
-// ---- 5. ci_limit ----
+// ---- 4. ci_limit ----
 
 test("advancePrWatch: count >= limit で awaitingHuman=true + 🆘 通知、2 周目は再通知しない", async () => {
   const pageId = "page-ci-limit";
@@ -381,7 +329,7 @@ test("advancePrWatch: count >= limit で awaitingHuman=true + 🆘 通知、2 �
     pages: {
       [pageId]: { status: "done", attempt: 1, prUrl: PR_URL, prWatch: { prUrl: PR_URL, phase: "ci", autoReworkCount: 3 }, updatedAt: "t" },
     },
-    gh: ghResponder({ snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-limit", checks: [failCheck("e2e")] }) }),
+    gh: ghResponder({ snapshot: ghSnapshot({ headSha: "sha-limit", checks: [failCheck("e2e")] }) }),
   });
 
   await orch.tick();
@@ -411,7 +359,7 @@ test("advancePrWatch: maxConcurrent 満杯なら マーカーを進めず持ち�
       [pageId]: { status: "done", attempt: 1, prUrl: PR_URL, prWatch: { prUrl: PR_URL, phase: "ci", autoReworkCount: 0 }, updatedAt: "t" },
     },
     config: { maxConcurrent: 0 },
-    gh: ghResponder({ snapshot: ghSnapshot({ state: "OPEN", headSha: "sha-busy", checks: [failCheck("test")] }) }),
+    gh: ghResponder({ snapshot: ghSnapshot({ headSha: "sha-busy", checks: [failCheck("test")] }) }),
   });
 
   await orch.tick();

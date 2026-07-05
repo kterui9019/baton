@@ -25,7 +25,6 @@ test("summarizeChecks: 件数と failed 抽出", () => {
 });
 
 const snap = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
-  state: "OPEN",
   headSha: "sha-1",
   checks: [],
   ...over,
@@ -37,15 +36,6 @@ const watch = (over: Partial<PrWatchInput> = {}): PrWatchInput => ({
 });
 const decide = (s: PrSnapshot, w: PrWatchInput, autoReworkLimit = 3) =>
   decidePrWatchAction({ snapshot: s, watch: w, autoReworkLimit });
-
-test("decide: MERGED → merged（failure があっても優先）", () => {
-  const a = decide(snap({ state: "MERGED", checks: [ngCheck] }), watch());
-  expect(a).toEqual({ type: "merged" });
-});
-
-test("decide: CLOSED → closed", () => {
-  expect(decide(snap({ state: "CLOSED" }), watch())).toEqual({ type: "closed" });
-});
 
 test("decide: awaitingHuman → none（failure があっても防御）", () => {
   const a = decide(

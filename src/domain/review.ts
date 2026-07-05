@@ -7,7 +7,6 @@ export interface PrCheck {
 
 /** PR 1 件のスナップショット。CodeHostPort 実装がこの形へ正規化する。 */
 export interface PrSnapshot {
-  state: "OPEN" | "MERGED" | "CLOSED";
   headSha: string;
   checks: PrCheck[];
 }
@@ -22,8 +21,6 @@ export interface PrWatchInput {
 
 /** PR 監視 1 回分の判定結果。 */
 export type PrWatchAction =
-  | { type: "merged" }
-  | { type: "closed" }
   | { type: "ci_green" }
   | { type: "ci_rework"; headSha: string; failedChecks: PrCheck[] }
   | { type: "ci_limit"; failedChecks: PrCheck[] }
@@ -47,7 +44,8 @@ export function summarizeChecks(checks: PrCheck[]): {
 
 /**
  * PR 監視 1 回分の判定（純粋関数・判定の中核）。
- * 優先順: merged → closed → awaitingHuman → CI failure → CI pending → 全 green。
+ * 優先順: awaitingHuman → CI failure → CI pending → 全 green。
+ * PR のマージ/クローズ検知は行わない（監視終了は Kanban 側の terminalLanes 到達に委ねる）。
  * 複数の入力値にまたがる優先順位付きガードのため、判別子1つに対する
  * 網羅マッチである ts-pattern は当てはめず、素直な早期 return で表現する。
  */
@@ -58,8 +56,6 @@ export function decidePrWatchAction(opts: {
 }): PrWatchAction {
   const { snapshot, watch, autoReworkLimit } = opts;
 
-  if (snapshot.state === "MERGED") return { type: "merged" };
-  if (snapshot.state === "CLOSED") return { type: "closed" };
   // 呼び出し側もフィルタするが防御
   if (watch.awaitingHuman) return { type: "none", reason: "awaiting human" };
 

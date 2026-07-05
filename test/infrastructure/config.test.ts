@@ -75,7 +75,6 @@ test("DEFAULT_CONFIG: 新規フィールドのデフォルト値", () => {
   expect(DEFAULT_CONFIG.kanban.notion.activityProperty).toBe("Activity");
   expect(DEFAULT_CONFIG.ghCommand).toBe("gh");
   expect(DEFAULT_CONFIG.prPollIntervalMs).toBe(60_000);
-  expect(DEFAULT_CONFIG.kanban.mergedLane).toBe("In Delivery");
   expect(DEFAULT_CONFIG.autoReworkLimit).toBe(3);
   expect(DEFAULT_CONFIG.promptTemplate).toBe("prompts/task.md");
   expect(DEFAULT_CONFIG.systemPromptTemplate).toBe("");

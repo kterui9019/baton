@@ -27,8 +27,6 @@ test("repoSlugFromPrUrl: 不正 URL は null", () => {
 });
 
 const snapshotFixture = {
-  state: "OPEN",
-  mergedAt: null,
   headRefOid: "abc123def456",
   statusCheckRollup: [
     {
@@ -57,7 +55,6 @@ const snapshotFixture = {
 test("parsePrSnapshot: CheckRun / StatusContext 混在を正規化", () => {
   const snap = parsePrSnapshot(snapshotFixture);
   expect(snap).not.toBeNull();
-  expect(snap!.state).toBe("OPEN");
   expect(snap!.headSha).toBe("abc123def456");
   expect(snap!.checks).toEqual([
     { name: "build", status: "success", detailsUrl: "https://github.com/o/r/actions/runs/111/job/1" },
@@ -74,8 +71,6 @@ test("parsePrSnapshot: CheckRun conclusion 全パターンの正規化", () => {
     conclusion,
   });
   const snap = parsePrSnapshot({
-    state: "OPEN",
-    mergedAt: null,
     headRefOid: "sha",
     statusCheckRollup: [
       mk("SUCCESS"),
@@ -97,26 +92,14 @@ test("parsePrSnapshot: CheckRun conclusion 全パターンの正規化", () => {
 test("parsePrSnapshot: StatusContext state 全パターンの正規化", () => {
   const mk = (state: string) => ({ __typename: "StatusContext", context: state, state });
   const snap = parsePrSnapshot({
-    state: "OPEN",
-    mergedAt: null,
     headRefOid: "sha",
     statusCheckRollup: [mk("SUCCESS"), mk("FAILURE"), mk("ERROR"), mk("PENDING"), mk("EXPECTED")],
   });
   expect(snap!.checks.map((c) => c.status)).toEqual(["success", "failure", "failure", "pending", "pending"]);
 });
 
-test("parsePrSnapshot: mergedAt 非 null なら state を MERGED に上書き（防御）", () => {
-  const snap = parsePrSnapshot({
-    state: "OPEN",
-    mergedAt: "2026-07-01T00:00:00Z",
-    headRefOid: "sha",
-    statusCheckRollup: null,
-  });
-  expect(snap!.state).toBe("MERGED");
-});
-
 test("parsePrSnapshot: statusCheckRollup null / 欠落は checks 空（CI 未設定）", () => {
-  const base = { state: "OPEN", mergedAt: null, headRefOid: "sha" };
+  const base = { headRefOid: "sha" };
   expect(parsePrSnapshot({ ...base, statusCheckRollup: null })!.checks).toEqual([]);
   expect(parsePrSnapshot(base)!.checks).toEqual([]);
   expect(parsePrSnapshot({ ...base, statusCheckRollup: [] })!.checks).toEqual([]);
@@ -125,8 +108,6 @@ test("parsePrSnapshot: statusCheckRollup null / 欠落は checks 空（CI 未設
 test("parsePrSnapshot: 不正入力は null", () => {
   expect(parsePrSnapshot(null)).toBeNull();
   expect(parsePrSnapshot("x")).toBeNull();
-  expect(parsePrSnapshot({})).toBeNull();
-  expect(parsePrSnapshot({ state: "UNKNOWN" })).toBeNull();
 });
 
 test("extractRunId: Actions URL から run ID を抽出", () => {
@@ -189,7 +170,7 @@ test("fetchPrSnapshot: gh pr view の引数と正常パース", async () => {
   expect(calls.length).toBe(1);
   expect(calls[0]!.cmd).toBe("gh");
   expect(calls[0]!.args).toEqual([
-    "pr", "view", PR_URL, "--json", "state,mergedAt,statusCheckRollup,headRefOid",
+    "pr", "view", PR_URL, "--json", "statusCheckRollup,headRefOid",
   ]);
   expect((calls[0]!.opts as { timeoutMs?: number }).timeoutMs).toBe(30_000);
   expect(snap!.headSha).toBe("abc123def456");

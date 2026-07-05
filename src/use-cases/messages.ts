@@ -71,16 +71,6 @@ export function activityCiGreen(): string {
   return `✅ CI グリーン — レビュー待ち (${hhmm()})`;
 }
 
-/** merged 検知時のアクティビティ。 */
-export function activityPrMerged(): string {
-  return `🚀 PR マージ検知 — ${hhmm()}`;
-}
-
-/** クローズ検知時のアクティビティ。 */
-export function activityPrClosed(): string {
-  return `⏹ PR がマージされずクローズ — ${hhmm()}`;
-}
-
 /** CI 自動修正上限到達時のアクティビティ。 */
 export function activityCiLimit(count: number): string {
   return `🆘 CI 自動修正が上限 (${count}回) に到達 — 人間の対応が必要 — ${hhmm()}`;
@@ -153,16 +143,6 @@ export function commentFailed(opts: {
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-/** merged 検知時のコメント本文。 */
-export function commentPrMerged(prUrl: string): string {
-  return `PR がマージされました: ${prUrl}`;
-}
-
-/** クローズ検知時のコメント本文。 */
-export function commentPrClosed(prUrl: string): string {
-  return `PR がマージされずクローズされました（監視を終了します）: ${prUrl}`;
 }
 
 /** CI 自動修正上限到達時のコメント本文（失敗 check 一覧付き）。 */

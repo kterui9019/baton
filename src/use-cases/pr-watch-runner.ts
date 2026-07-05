@@ -6,15 +6,7 @@ import type { Config } from "../infrastructure/config.ts";
 import { nowIso, oneLine } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { KanbanIo } from "./kanban-io.ts";
-import {
-  activityCiGreen,
-  activityCiLimit,
-  activityPrClosed,
-  activityPrMerged,
-  commentCiLimit,
-  commentPrClosed,
-  commentPrMerged,
-} from "./messages.ts";
+import { activityCiGreen, activityCiLimit, commentCiLimit } from "./messages.ts";
 import type { CodeHostPort } from "./ports/code-host-port.ts";
 import type { KanbanPort } from "./ports/kanban-port.ts";
 
@@ -74,39 +66,6 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
         deps.log.warn("pr_watch", { page_id: pageId, msg: oneLine(String(err)) });
       }
     }
-  }
-
-  async function handleMerged(pageId: string, ps: PageState, watch: PrWatchState): Promise<void> {
-    const c = deps.cfg();
-    deps.getState().pages[pageId] = { ...ps, prWatch: undefined, updatedAt: nowIso() };
-    deps.persist();
-    deps.log.info("pr_watch", {
-      page_id: pageId,
-      msg: `PR マージ検知 → ${c.kanban.mergedLane} へ: ${watch.prUrl}`,
-    });
-    await deps.kanbanIo.safeUpdate("pr_merged_update", pageId, (k) =>
-      k.updateTicket(pageId, { lane: c.kanban.mergedLane, activity: activityPrMerged() }),
-    );
-    await deps.kanbanIo.safeUpdate("pr_merged_comment", pageId, (k) =>
-      k.addComment(pageId, commentPrMerged(watch.prUrl)),
-    );
-    await deps.kanbanIo.refreshLastEditedTime("pr_merged_refresh", pageId, "done");
-  }
-
-  async function handleClosed(pageId: string, ps: PageState, watch: PrWatchState): Promise<void> {
-    deps.getState().pages[pageId] = { ...ps, prWatch: undefined, updatedAt: nowIso() };
-    deps.persist();
-    deps.log.info("pr_watch", {
-      page_id: pageId,
-      msg: `PR がマージされずクローズ（監視終了）: ${watch.prUrl}`,
-    });
-    await deps.kanbanIo.safeUpdate("pr_closed_update", pageId, (k) =>
-      k.updateTicket(pageId, { activity: activityPrClosed() }),
-    );
-    await deps.kanbanIo.safeUpdate("pr_closed_comment", pageId, (k) =>
-      k.addComment(pageId, commentPrClosed(watch.prUrl)),
-    );
-    await deps.kanbanIo.refreshLastEditedTime("pr_closed_refresh", pageId, "done");
   }
 
   async function handleCiGreen(
@@ -203,8 +162,6 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
     action: PrWatchAction,
   ): Promise<void> {
     await match(action)
-      .with({ type: "merged" }, () => handleMerged(pageId, ps, watch))
-      .with({ type: "closed" }, () => handleClosed(pageId, ps, watch))
       .with({ type: "ci_green" }, () => handleCiGreen(pageId, ps, watch, headSha))
       .with({ type: "ci_rework" }, (a) => handleCiRework(pageId, ps, watch, a))
       .with({ type: "ci_limit" }, (a) => handleCiLimit(pageId, ps, watch, a))

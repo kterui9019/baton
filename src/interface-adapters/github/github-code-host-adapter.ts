@@ -74,23 +74,19 @@ function normalizeCheck(raw: unknown): PrCheck {
 }
 
 const GhPrViewSchema = z.object({
-  state: z.enum(["OPEN", "MERGED", "CLOSED"]),
-  mergedAt: z.string().nullish(),
   headRefOid: z.string().optional(),
   statusCheckRollup: z.array(z.unknown()).nullish(),
 });
 
-/** `gh pr view --json state,mergedAt,statusCheckRollup,headRefOid` の出力をパースする。不正入力は null。 */
+/** `gh pr view --json statusCheckRollup,headRefOid` の出力をパースする。不正入力は null。 */
 export function parsePrSnapshot(json: unknown): PrSnapshot | null {
   const parsed = GhPrViewSchema.safeParse(json);
   if (!parsed.success) return null;
   const j = parsed.data;
-  const state = j.mergedAt ? "MERGED" : j.state;
   const checks = Array.isArray(j.statusCheckRollup)
     ? j.statusCheckRollup.map(normalizeCheck)
     : [];
   return {
-    state,
     headSha: j.headRefOid ?? "",
     checks,
   };
@@ -135,13 +131,7 @@ export function createGitHubCodeHostAdapter(
     try {
       const res = await run(
         opts.ghCommand,
-        [
-          "pr",
-          "view",
-          prUrl,
-          "--json",
-          "state,mergedAt,statusCheckRollup,headRefOid",
-        ],
+        ["pr", "view", prUrl, "--json", "statusCheckRollup,headRefOid"],
         { timeoutMs },
       );
       if (res.code !== 0) return null;

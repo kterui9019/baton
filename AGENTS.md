@@ -36,7 +36,7 @@ src/
     ports/                KanbanPort / CodingAgentPort / CodeHostPort / WorkspacePort / StateRepositoryPort
     orchestrator.ts        thin facade wiring the runners below (shared state + tick ordering only)
     dispatch-runner.ts     claim → prepare workspace → run agent → onSuccess/onNeedsInfo/onFailure
-    pr-watch-runner.ts     advancePrWatch + handling of decidePrWatchAction results (merged/ci_green/ci_rework 等)
+    pr-watch-runner.ts     advancePrWatch + handling of decidePrWatchAction results (ci_green/ci_rework/ci_limit 等)
     lifecycle-runner.ts    stopMovedOrDeletedRuns / terminalCleanup / shutdown
     startup-recovery.ts    orphan running rows → done / needs_info / retry_queued on startup
     kanban-io.ts           safe KanbanPort wrappers (safeUpdate / refreshLastEditedTime / fetchFeedbackComments)
@@ -75,7 +75,7 @@ To add a new Kanban provider or coding agent, add a new adapter under `interface
 1. **Poll** the Kanban (Notion) for candidates matching `triggerLanes` + condition + repo set, not already running.
 2. **Dispatch**: claim in state, resolve/clone repo, create a git worktree + branch, render the prompt template, spawn the agent CLI with stdin-piped prompt, write result to `state/results/<page_id>.json`.
 3. **Result handling**: on success with a PR URL, state becomes `done` + `prWatch` (lane stays put, CI is watched); on success without a PR, lane moves straight to `doneLane`. On failure, retry with backoff up to `agent.maxAttempts`, then `failed`.
-4. **prReconcile** (separate polling loop, `prPollIntervalMs`) drives the PR feedback loop via `decidePrWatchAction`: CI green → move to `doneLane`; CI failure → auto-rework (log injection) up to `autoReworkLimit`, then `awaitingHuman`; `CHANGES_REQUESTED` review → auto-rework; merged → move to `mergedLane`; closed → stop watching.
+4. **prReconcile** (separate polling loop, `prPollIntervalMs`) drives the PR feedback loop via `decidePrWatchAction`: CI green → move to `doneLane`; CI failure → auto-rework (log injection) up to `autoReworkLimit`, then `awaitingHuman`. PR merge/close is not detected — watching simply stops once the human moves the card into `terminalLanes` (`terminalCleanup` deletes the whole state entry regardless of `prWatch`).
 5. **Rework**: a human editing/moving a `done`/`failed` ticket (detected via `last_edited_time` advancing past the recorded value) triggers a fresh dispatch reusing the same worktree/branch, feeding in new page comments.
 6. **needs_info**: the agent can report a question instead of failing; the ticket waits (lane untouched) until a non-bot comment or body edit answers it, then resumes in the same worktree.
 

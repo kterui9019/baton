@@ -23,7 +23,6 @@
     "provider": "notion",
     "triggerLanes": ["In Progress"],
     "doneLane": "Human Review",
-    "mergedLane": "In Delivery",
     "terminalLanes": ["Released", "Canceled"],
     "notion": {
       "dataSourceId": "YOUR_DATA_SOURCE_ID",
