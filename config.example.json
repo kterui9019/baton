@@ -38,7 +38,9 @@
     "github": {
       "owner": "your-org",
       "repos": ["your-repo"],
-      "lanePrefix": "status:",
+      "triggerLabels": ["In Progress"],
+      "doneLabel": "Human Review",
+      "terminalLabels": ["Released", "Canceled"],
       "conditionLabel": ""
     }
   },

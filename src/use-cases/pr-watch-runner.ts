@@ -3,6 +3,7 @@ import type { ResumeInput } from "../domain/eligibility.ts";
 import type { PageState, PrWatchState, StateFile } from "../domain/state.ts";
 import { decidePrWatchAction, type PrWatchAction } from "../domain/review.ts";
 import type { Config } from "../infrastructure/config.ts";
+import { resolveKanbanLanes } from "../infrastructure/config.ts";
 import { nowIso, oneLine } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { KanbanIo } from "./kanban-io.ts";
@@ -74,21 +75,22 @@ export function createPrWatchRunner(deps: PrWatchRunnerDeps): {
     watch: PrWatchState,
   ): Promise<void> {
     const c = deps.cfg();
+    const lanes = resolveKanbanLanes(c);
     const snapshot = await deps.kanban().getPage(pageId);
     const lane = snapshot.ticket.lane;
-    const moveLane = lane !== null && c.kanban.triggerLanes.includes(lane);
+    const moveLane = lane !== null && lanes.triggerLanes.includes(lane);
     const nextWatch: PrWatchState = { ...watch, phase: "review" };
     deps.getState().pages[pageId] = { ...ps, prWatch: nextWatch, updatedAt: nowIso() };
     deps.persist();
     deps.log.info("pr_watch", {
       page_id: pageId,
       msg: `CI グリーン → レビュー待ち${
-        moveLane ? `（${c.kanban.doneLane} へ移動）` : `（レーン ${lane} は維持）`
+        moveLane ? `（${lanes.doneLane} へ移動）` : `（レーン ${lane} は維持）`
       }: ${watch.prUrl}`,
     });
     if (moveLane) {
       await deps.kanbanIo.safeUpdate("ci_green_update", pageId, (k) =>
-        k.updateTicket(pageId, { lane: c.kanban.doneLane }),
+        k.updateTicket(pageId, { lane: lanes.doneLane }),
       );
     }
     await deps.kanbanIo.safeUpdate("ci_green_comment", pageId, (k) =>
