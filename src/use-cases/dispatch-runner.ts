@@ -312,24 +312,27 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
   ): void {
     const c = deps.cfg();
     const state = deps.getState();
-    const eligible = candidates
-      .map((t) => ({
-        t,
-        decision: decideEligibility({
-          ticket: t,
-          cfg: eligibilityCfg(operatorUserId),
-          isActive: deps.active.has(t.pageId),
-          ps: state.pages[t.pageId],
-          needsInfoAnswered: needsInfoAnswers.get(t.pageId),
-        }),
-      }))
-      .filter(
-        (e): e is { t: Ticket; decision: EligibilityDecision & { eligible: true } } =>
-          e.decision.eligible,
-      );
+    const decided = candidates.map((t) => ({
+      t,
+      decision: decideEligibility({
+        ticket: t,
+        cfg: eligibilityCfg(operatorUserId),
+        isActive: deps.active.has(t.pageId),
+        ps: state.pages[t.pageId],
+        needsInfoAnswered: needsInfoAnswers.get(t.pageId),
+      }),
+    }));
+    const eligible = decided.filter(
+      (e): e is { t: Ticket; decision: EligibilityDecision & { eligible: true } } =>
+        e.decision.eligible,
+    );
     deps.log.info("candidates", {
       msg: `${candidates.length} 件中 ${eligible.length} 件が dispatch 可能`,
     });
+    for (const { t, decision } of decided) {
+      if (decision.eligible) continue;
+      deps.log.info("skip", { page_id: t.pageId, msg: decision.reason });
+    }
     for (const { t, decision } of eligible) {
       if (deps.isShuttingDown()) break;
       if (deps.active.size >= c.maxConcurrent) break;
