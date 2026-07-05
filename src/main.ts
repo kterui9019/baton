@@ -14,10 +14,39 @@ interface CliArgs {
   once: boolean;
   dryRun: boolean;
   configPath?: string;
+  help: boolean;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function formatHelpText(): string {
+  return `baton — Kanban 駆動のローカルコーディングエージェントオーケストレーター
+
+使い方:
+  baton [コマンド] [オプション]
+
+コマンド:
+  (省略)              デーモンをフォアグラウンドで常駐実行（既定）
+  status              state.json の稼働状況を表示
+  init                ~/.config/baton に config と prompts のひな形を作成
+  launchd install     launchd に登録して常駐化（macOS）
+  launchd uninstall   launchd 登録を解除
+
+オプション:
+  --once              1 tick だけ実行して終了
+  --dry-run           書き込み・エージェント起動なし（--once と併用）
+  --config <path>     config.json のパスを指定
+  -h, --help          このヘルプを表示
+
+例:
+  baton init
+  baton --once --dry-run
+  baton status
+  baton launchd install
+`;
+}
+
+export function parseArgs(argv: string[]): CliArgs {
   const args = argv.slice(2);
+  const help = args.includes("-h") || args.includes("--help");
   const command: Command = ((): Command => {
     if (args[0] === "status") return "status";
     if (args[0] === "init") return "init";
@@ -33,7 +62,7 @@ function parseArgs(argv: string[]): CliArgs {
     const next = args[ci + 1];
     if (next) configPath = resolve(next);
   }
-  return { command, once, dryRun, configPath };
+  return { command, once, dryRun, configPath, help };
 }
 
 /** パッケージのインストール先（コード自体の場所）。デフォルト資産（prompts/, config.example.json）の参照にのみ使う。 */
@@ -72,6 +101,10 @@ function runInit(installRoot: string, dataHome: string): void {
 
 async function main(): Promise<void> {
   const cli = parseArgs(process.argv);
+  if (cli.help) {
+    console.log(formatHelpText());
+    return;
+  }
   const installRoot = installRootDir();
   const dataHome = resolveDataHome();
 
