@@ -46,19 +46,26 @@ const GhIssueListItemSchema = z.object({
 });
 type GhIssueListItem = z.infer<typeof GhIssueListItemSchema>;
 
-/** GitHub Issues 上の lane ラベルに付ける固定プレフィックス（`status:<lane>`）。 */
-export const GITHUB_LANE_LABEL_PREFIX = "status:";
+/** GitHub カンバンで管理対象とする issue ラベル（trigger / done / terminal）の集合。 */
+export function collectManagedLabels(
+  gcfg: Config["kanban"]["github"],
+): ReadonlySet<string> {
+  return new Set([
+    ...gcfg.triggerLabels,
+    gcfg.doneLabel,
+    ...gcfg.terminalLabels,
+  ]);
+}
 
-/** ラベル配列から `status:` プレフィックスにマッチする最初の lane 名を返す。 */
+/** ラベル配列から管理対象ラベルのうち最初にマッチした lane 名を返す。 */
 export function extractLaneFromLabels(
   labels: Array<{ name?: string }> | undefined,
+  managedLabels: ReadonlySet<string>,
 ): string | null {
   if (!labels) return null;
   for (const l of labels) {
     const name = l.name ?? "";
-    if (name.startsWith(GITHUB_LANE_LABEL_PREFIX)) {
-      return name.slice(GITHUB_LANE_LABEL_PREFIX.length);
-    }
+    if (managedLabels.has(name)) return name;
   }
   return null;
 }
@@ -72,6 +79,7 @@ export function parseIssueListItem(
   owner: string,
   repo: string,
   item: unknown,
+  managedLabels: ReadonlySet<string>,
 ): Ticket | null {
   const parsed = GhIssueListItemSchema.safeParse(item);
   if (!parsed.success) return null;
@@ -80,7 +88,7 @@ export function parseIssueListItem(
     pageId: formatPageId(owner, repo, j.number),
     url: j.url ?? "",
     title: j.title ?? "",
-    lane: extractLaneFromLabels(j.labels),
+    lane: extractLaneFromLabels(j.labels, managedLabels),
     repo,
     condition: null,
     lastEditedTime: j.updatedAt ?? "",
@@ -127,7 +135,7 @@ const NOT_FOUND_PATTERN = /not\s*found|could not find|404|no issue found/i;
 
 /**
  * `gh` CLI ベースの GitHub Issues KanbanPort 実装。
- * lane はラベル (`status:<lane>`) で表現する。
+ * lane は `kanban.github.*Label(s)` で指定した issue ラベルで表現する。
  */
 export function createGitHubKanbanAdapter(
   config: Config,
@@ -135,6 +143,7 @@ export function createGitHubKanbanAdapter(
 ): KanbanPort {
   const gh = config.ghCommand;
   const gcfg = config.kanban.github;
+  const managedLabels = collectManagedLabels(gcfg);
 
   async function ghStdout(args: string[]): Promise<string> {
     const res = await run(gh, args, { timeoutMs: GH_TIMEOUT_MS });
@@ -151,8 +160,8 @@ export function createGitHubKanbanAdapter(
   async function queryCandidates(): Promise<Ticket[]> {
     const tickets: Ticket[] = [];
     for (const repo of gcfg.repos) {
-      for (const lane of config.kanban.triggerLanes) {
-        const labels: string[] = [`${GITHUB_LANE_LABEL_PREFIX}${lane}`];
+      for (const label of gcfg.triggerLabels) {
+        const labels: string[] = [label];
         if (gcfg.conditionLabel !== "") labels.push(gcfg.conditionLabel);
         const args = [
           "issue",
@@ -173,7 +182,7 @@ export function createGitHubKanbanAdapter(
         const parsed = JSON.parse(stdout) as unknown;
         if (!Array.isArray(parsed)) continue;
         for (const item of parsed) {
-          const t = parseIssueListItem(gcfg.owner, repo, item);
+          const t = parseIssueListItem(gcfg.owner, repo, item, managedLabels);
           if (t) tickets.push(t);
         }
       }
@@ -231,7 +240,7 @@ export function createGitHubKanbanAdapter(
         pageId,
         url: view.url ?? "",
         title: view.title ?? "",
-        lane: extractLaneFromLabels(view.labels),
+        lane: extractLaneFromLabels(view.labels, managedLabels),
         repo: slug.repo,
         condition: null,
         lastEditedTime: view.updatedAt ?? "",
@@ -293,8 +302,8 @@ export function createGitHubKanbanAdapter(
       const current = (view.labels ?? [])
         .map((l) => l.name ?? "")
         .filter((n) => n !== "");
-      const toRemove = current.filter((n) => n.startsWith(GITHUB_LANE_LABEL_PREFIX));
-      const toAdd = `${GITHUB_LANE_LABEL_PREFIX}${update.lane}`;
+      const toRemove = current.filter((n) => managedLabels.has(n));
+      const toAdd = update.lane;
       const args = [
         "issue",
         "edit",

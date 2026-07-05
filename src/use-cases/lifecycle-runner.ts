@@ -5,6 +5,7 @@ import type { StateFile } from "../domain/state.ts";
 import { classifyRunningEntry, type RunningEntrySnapshot } from "../domain/stop-decision.ts";
 import type { KanbanPageSnapshot } from "../domain/ticket.ts";
 import type { Config } from "../infrastructure/config.ts";
+import { resolveKanbanLanes } from "../infrastructure/config.ts";
 import { oneLine, sleep } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { AgentHandle } from "../infrastructure/process-runner.ts";
@@ -65,7 +66,7 @@ export function createLifecycleRunner(deps: LifecycleRunnerDeps): {
       const snapshot = await fetchRunningSnapshot(entry.pageId);
       const status = classifyRunningEntry({
         snapshot,
-        triggerLanes: c.kanban.triggerLanes,
+        triggerLanes: resolveKanbanLanes(c).triggerLanes,
         dispatchedByUs: entry.dispatchedByUs,
       });
       match(status)
@@ -115,7 +116,7 @@ export function createLifecycleRunner(deps: LifecycleRunnerDeps): {
       const action = decideCleanup({
         ps,
         snapshot,
-        terminalLanes: c.kanban.terminalLanes,
+        terminalLanes: resolveKanbanLanes(c).terminalLanes,
         repoLocalDirPath: (repo) => c.repoConfig[repo]?.localDirPath,
       });
       if (action.type === "skip") continue;

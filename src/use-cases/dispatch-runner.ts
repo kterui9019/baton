@@ -18,6 +18,7 @@ import { toDone, toFailed, toNeedsInfo, toRetryQueued, toRunning, type PageState
 import type { Ticket } from "../domain/ticket.ts";
 import type { WorkspaceInfo } from "../domain/workspace.ts";
 import type { AgentProvider, Config } from "../infrastructure/config.ts";
+import { resolveKanbanLanes } from "../infrastructure/config.ts";
 import { nowIso, oneLine, tail } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { AgentHandle } from "../infrastructure/process-runner.ts";
@@ -178,7 +179,10 @@ export function createDispatchRunner(deps: DispatchRunnerDeps): {
     deps.log.info("success", { page_id: ticket.pageId, msg: prUrl ?? "(PRなし)" });
 
     await deps.kanbanIo.safeUpdate("success_update", ticket.pageId, (k) =>
-      k.updateTicket(ticket.pageId, ticketUpdateSuccess(prUrl, deps.cfg().kanban.doneLane)),
+      k.updateTicket(
+        ticket.pageId,
+        ticketUpdateSuccess(prUrl, resolveKanbanLanes(deps.cfg()).doneLane),
+      ),
     );
     const elapsedSec = entry ? Math.round((Date.now() - entry.startedAt) / 1000) : 0;
     await deps.kanbanIo.safeUpdate("success_comment", ticket.pageId, (k) =>

@@ -10,6 +10,7 @@ import {
   type StateFile,
 } from "../domain/state.ts";
 import type { Config } from "../infrastructure/config.ts";
+import { resolveKanbanLanes } from "../infrastructure/config.ts";
 import { nowIso, oneLine } from "../infrastructure/format.ts";
 import type { Logger } from "../infrastructure/logger.ts";
 import type { KanbanIo } from "./kanban-io.ts";
@@ -81,7 +82,10 @@ export function createStartupRecovery(
       msg: `起動リカバリ: 完遂済みを検出し done 確定 — ${prUrl ?? "(PRなし)"}`,
     });
     await deps.kanbanIo.safeUpdate("recovered_success_update", pageId, (k) =>
-      k.updateTicket(pageId, ticketUpdateRecoveredSuccess(prUrl, c.kanban.doneLane)),
+      k.updateTicket(
+        pageId,
+        ticketUpdateRecoveredSuccess(prUrl, resolveKanbanLanes(c).doneLane),
+      ),
     );
     await deps.kanbanIo.safeUpdate("recovered_success_comment", pageId, (k) =>
       k.addComment(pageId, commentRecoveredSuccess({ summary, prUrl })),

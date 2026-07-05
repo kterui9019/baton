@@ -53,8 +53,8 @@ const notionKanbanSchema = z
   .prefault({});
 
 /**
- * GitHub Issues をカンバンとして扱う設定。lane は `status:<lane>` 形式のラベルで表現する
- * （プレフィックスは固定で `status:`）。
+ * GitHub Issues をカンバンとして扱う設定。lane は issue ラベルで表現する
+ * （`triggerLabels` / `doneLabel` / `terminalLabels` で各レーンのラベル名を直接指定）。
  */
 const githubKanbanSchema = z
   .object({
@@ -62,9 +62,15 @@ const githubKanbanSchema = z
     owner: z.string().default(""),
     /** 対象リポジトリ名の配列（owner 配下の <name> のみ、`owner/name` ではない）。 */
     repos: z.array(z.string()).default([]),
+    /** 実行トリガーとなる issue ラベル（Notion の triggerLanes 相当）。 */
+    triggerLabels: z.array(z.string()).default(["In Progress"]),
+    /** CI グリーン後の移動先ラベル（Notion の doneLane 相当）。 */
+    doneLabel: z.string().default("Human Review"),
+    /** このラベルに入ったら worktree と state を掃除（Notion の terminalLanes 相当）。 */
+    terminalLabels: z.array(z.string()).default(["Released", "Canceled"]),
     /**
      * 追加フィルタ用ラベル（Notion の Condition プロパティ相当）。
-     * "" なら無効（trigger lane のみで判定）、指定時はこのラベルが付いた issue のみ対象。
+     * "" なら無効（trigger ラベルのみで判定）、指定時はこのラベルが付いた issue のみ対象。
      */
     conditionLabel: z.string().default(""),
   })
@@ -153,6 +159,33 @@ const configSchema = z.object({
 });
 
 export type Config = z.infer<typeof configSchema>;
+
+/** カンバン上のレーン（プロバイダーに依存しない論理名）。 */
+export type KanbanLanes = {
+  triggerLanes: string[];
+  doneLane: string;
+  terminalLanes: string[];
+};
+
+/**
+ * 現在有効なカンバンプロバイダーに応じたレーン設定を返す。
+ * GitHub では `kanban.github.*Label(s)`、Notion ではトップレベルの triggerLanes 等を使う。
+ */
+export function resolveKanbanLanes(config: Config): KanbanLanes {
+  if (config.kanban.provider === "github") {
+    const g = config.kanban.github;
+    return {
+      triggerLanes: g.triggerLabels,
+      doneLane: g.doneLabel,
+      terminalLanes: g.terminalLabels,
+    };
+  }
+  return {
+    triggerLanes: config.kanban.triggerLanes,
+    doneLane: config.kanban.doneLane,
+    terminalLanes: config.kanban.terminalLanes,
+  };
+}
 
 /** schema から導出したデフォルト設定（空入力を parse して全 default を確定させる）。 */
 export const DEFAULT_CONFIG: Config = configSchema.parse({});

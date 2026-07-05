@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   DEFAULT_CONFIG,
   loadConfig,
+  resolveKanbanLanes,
   validateConfig,
 } from "../../src/infrastructure/config.ts";
 
@@ -149,12 +150,47 @@ test("loadConfig: onlyOwnTickets を false に上書きできる", () => {
 });
 
 test("DEFAULT_CONFIG: GitHub kanban / 新 agent プロバイダのデフォルト値", () => {
+  expect(DEFAULT_CONFIG.kanban.github.triggerLabels).toEqual(["In Progress"]);
+  expect(DEFAULT_CONFIG.kanban.github.doneLabel).toBe("Human Review");
+  expect(DEFAULT_CONFIG.kanban.github.terminalLabels).toEqual(["Released", "Canceled"]);
   expect(DEFAULT_CONFIG.kanban.github.conditionLabel).toBe("");
   expect(DEFAULT_CONFIG.kanban.github.owner).toBe("");
   expect(DEFAULT_CONFIG.kanban.github.repos).toEqual([]);
   expect(DEFAULT_CONFIG.agent.opencode.command).toBe("opencode");
   expect(DEFAULT_CONFIG.agent.grok.command).toBe("grok");
   expect(DEFAULT_CONFIG.agent.codex.command).toBe("codex");
+});
+
+test("resolveKanbanLanes: github では github.*Label(s) を返す", () => {
+  const cfg = {
+    ...DEFAULT_CONFIG,
+    kanban: {
+      ...DEFAULT_CONFIG.kanban,
+      provider: "github" as const,
+      triggerLanes: ["Not Used"],
+      doneLane: "Not Used",
+      terminalLanes: ["Not Used"],
+      github: {
+        ...DEFAULT_CONFIG.kanban.github,
+        triggerLabels: ["baton:wip"],
+        doneLabel: "baton:review",
+        terminalLabels: ["baton:done"],
+      },
+    },
+  };
+  expect(resolveKanbanLanes(cfg)).toEqual({
+    triggerLanes: ["baton:wip"],
+    doneLane: "baton:review",
+    terminalLanes: ["baton:done"],
+  });
+});
+
+test("resolveKanbanLanes: notion ではトップレベルの triggerLanes 等を返す", () => {
+  expect(resolveKanbanLanes(DEFAULT_CONFIG)).toEqual({
+    triggerLanes: ["In Progress"],
+    doneLane: "Human Review",
+    terminalLanes: ["Released", "Canceled"],
+  });
 });
 
 const validGithubConfig = {
