@@ -66,6 +66,24 @@ export function parseTicket(pageJson: unknown, config: Config): Ticket {
   };
 }
 
+/**
+ * GET /v1/users/me のレスポンス。internal integration の場合 `id` は bot 自身の ID なので、
+ * onlyOwnTickets の比較には bot.owner.user.id（インテグレーションの所有者）を使う。
+ */
+const NotionMeSchema = z.object({
+  id: z.string().optional(),
+  bot: z
+    .object({
+      owner: z
+        .object({
+          type: z.string().optional(),
+          user: z.object({ id: z.string().optional() }).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
 const NotionCommentSchema = z.object({
   created_time: z.string().optional(),
   created_by: z.object({ id: z.string().optional() }).optional(),
@@ -223,8 +241,10 @@ export function createNotionKanbanAdapter(
 
   async function getBotUserId(): Promise<string | null> {
     const stdout = await ntnStdout(["api", "/v1/users/me"]);
-    const j = JSON.parse(stdout) as { id?: string };
-    return typeof j?.id === "string" ? j.id : null;
+    const parsed = NotionMeSchema.safeParse(JSON.parse(stdout));
+    if (!parsed.success) return null;
+    const j = parsed.data;
+    return j.bot?.owner?.type === "user" ? j.bot.owner.user?.id ?? j.id ?? null : j.id ?? null;
   }
 
   async function updateProperties(
