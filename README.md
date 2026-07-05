@@ -1,9 +1,7 @@
-# baton
+<img width="512" height="278" alt="baton" src="https://github.com/user-attachments/assets/43e73772-b461-49c0-90dd-9645fabed9c0" />
 
 [![CI](https://github.com/kterui9019/baton/actions/workflows/ci.yml/badge.svg)](https://github.com/kterui9019/baton/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40kterui9019%2Fbaton)](https://www.npmjs.com/package/@kterui9019/baton)
-
-<img width="512" height="278" alt="baton" src="https://github.com/user-attachments/assets/43e73772-b461-49c0-90dd-9645fabed9c0" />
 
 カンバン（Notion / GitHub Issues に対応）をエージェントオーケストレーターとして使い、チケットを **In Progress** レーンに動かすとローカルでコーディングエージェント（Claude Code / takt / opencode / grok / codex）が走って実装 → PR 作成 → CI 監視 → レビュー対応 → カンバン更新まで自動化する常駐デーモンです。[openai/symphony](https://github.com/openai/symphony/blob/main/SPEC.md) にインスパイアされています。
 
