@@ -19,6 +19,15 @@ flowchart LR
     Workspace --> PR
 ```
 
+## Demo
+
+### Notion
+<img width="960" height="540" alt="baton-notion-2" src="https://github.com/user-attachments/assets/d68b4c37-7fbd-4a4e-9bfb-2efd9ada79e1" />
+
+### Github Issue
+<img width="960" height="540" alt="baton-github-3" src="https://github.com/user-attachments/assets/47868a0b-36d8-41db-9753-d8673663e563" />
+
+
 ## 必要なもの
 
 - **macOS**（常駐化が launchd 前提のため。`baton --once` 等の手動実行なら他 OS でも動作します）
