@@ -149,7 +149,6 @@ test("loadConfig: onlyOwnTickets を false に上書きできる", () => {
 });
 
 test("DEFAULT_CONFIG: GitHub kanban / 新 agent プロバイダのデフォルト値", () => {
-  expect(DEFAULT_CONFIG.kanban.github.lanePrefix).toBe("status:");
   expect(DEFAULT_CONFIG.kanban.github.conditionLabel).toBe("");
   expect(DEFAULT_CONFIG.kanban.github.owner).toBe("");
   expect(DEFAULT_CONFIG.kanban.github.repos).toEqual([]);

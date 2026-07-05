@@ -62,13 +62,14 @@ test("parsePageId: 不正フォーマットは null", () => {
 
 test("extractLaneFromLabels: プレフィックス一致の最初の lane を返す", () => {
   expect(
-    extractLaneFromLabels(
-      [{ name: "bug" }, { name: "status:In Progress" }, { name: "status:Done" }],
-      "status:",
-    ),
+    extractLaneFromLabels([
+      { name: "bug" },
+      { name: "status:In Progress" },
+      { name: "status:Done" },
+    ]),
   ).toBe("In Progress");
-  expect(extractLaneFromLabels([{ name: "bug" }], "status:")).toBeNull();
-  expect(extractLaneFromLabels(undefined, "status:")).toBeNull();
+  expect(extractLaneFromLabels([{ name: "bug" }])).toBeNull();
+  expect(extractLaneFromLabels(undefined)).toBeNull();
 });
 
 test("parseIssueListItem: 内部 Ticket へ変換", () => {
@@ -85,7 +86,6 @@ test("parseIssueListItem: 内部 Ticket へ変換", () => {
       author: { login: "dev1" },
       state: "open",
     },
-    "status:",
   );
   expect(t).not.toBeNull();
   expect(t!.pageId).toBe("acme/baton#7");

@@ -53,8 +53,8 @@ const notionKanbanSchema = z
   .prefault({});
 
 /**
- * GitHub Issues をカンバンとして扱う設定。lane はラベル
- * （`<lanePrefix><lane>` 形式、例: `status:In Progress`）で表現する。
+ * GitHub Issues をカンバンとして扱う設定。lane は `status:<lane>` 形式のラベルで表現する
+ * （プレフィックスは固定で `status:`）。
  */
 const githubKanbanSchema = z
   .object({
@@ -62,8 +62,6 @@ const githubKanbanSchema = z
     owner: z.string().default(""),
     /** 対象リポジトリ名の配列（owner 配下の <name> のみ、`owner/name` ではない）。 */
     repos: z.array(z.string()).default([]),
-    /** lane ラベルのプレフィックス。lane 名は「プレフィックス + triggerLanes/doneLane の値」で組み立てる。 */
-    lanePrefix: z.string().default("status:"),
     /**
      * 追加フィルタ用ラベル（Notion の Condition プロパティ相当）。
      * "" なら無効（trigger lane のみで判定）、指定時はこのラベルが付いた issue のみ対象。
